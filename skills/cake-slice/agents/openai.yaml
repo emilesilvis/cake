@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cake Slice"
+  short_description: "Turn a direction into one finishable slice"
+  default_prompt: "Use $cake-slice to turn this direction into one independently finishable slice."
