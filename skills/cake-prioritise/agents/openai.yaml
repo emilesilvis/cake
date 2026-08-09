@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cake Prioritise"
+  short_description: "Choose the next portfolio slice"
+  default_prompt: "Use $cake-prioritise to decide which project slice I should do next."
