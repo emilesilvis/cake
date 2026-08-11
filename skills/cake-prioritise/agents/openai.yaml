@@ -1,4 +1,6 @@
 interface:
   display_name: "Cake Prioritise"
-  short_description: "Choose the next portfolio slice"
-  default_prompt: "Use $cake-prioritise to decide which project slice I should do next."
+  short_description: "Choose and safely move the next Slice"
+  icon_small: "./assets/cake-icon.png"
+  icon_large: "./assets/cake-icon.png"
+  default_prompt: "Use $cake-prioritise to choose what belongs on my Plate next."

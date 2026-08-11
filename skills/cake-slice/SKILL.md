@@ -1,99 +1,64 @@
 ---
 name: cake-slice
-description: Turn a chosen project direction into one independently finishable slice and, after explicit approval, update an existing Trello card or create a new one from a Git repository. Use when work is vague, unending, too broad, framed as an implementation checklist, or needs a short Outcome/Success card. Do not use to compare priorities across projects; use cake-prioritise for that.
+description: Shape one chosen Cake direction into an independently finishable canonical Slice and, after explicit approval, create or update that Slice in its configured GitHub or Plate-native source. Use when work is vague, unending, too broad, checklist-shaped, or needs a concise Outcome/Success boundary. Do not compare Cakes, nominate Next Slice, or change Cake Stand or Plate membership; use cake-prioritise for those decisions.
 ---
 
 # Cake Slice
 
-Produce one bounded outcome. Keep the card short. Ask only about decisions that materially change its outcome or boundary.
+Read `../../CONTEXT.md` completely before acting. Produce exactly one bounded Slice with exactly one parent Cake.
 
 ## Workflow
 
-1. Identify the input mode.
-   - **Trello card:** run `python3 scripts/cake_trello.py read-card <card-url-or-id>` and treat its current contents as the source direction.
-   - **Repository:** inspect the repository, its current state, and its Git remote. Run `python3 scripts/cake_trello.py config get --repo <path>` before preparing a new card.
-2. Establish one chosen direction.
-   - If the user supplied one, use it.
-   - Otherwise infer one candidate from the available context, recommend it, and wait for confirmation before slicing.
-3. Discover facts from the environment. Do not ask the user for information available in the card, repository, Git history, or configuration.
-4. Shape one candidate slice. Explore alternatives internally. Surface alternatives only when a genuine trade-off requires the user's decision.
-5. Apply every quality gate below. Repair a failed candidate before presenting it.
-6. Present the exact Trello draft and wait for explicit approval.
-7. After approval, use the helper's preview token to apply the same draft. Never perform a Trello write before approval.
-
-Ask decision questions one at a time. Include a recommended answer with each question.
+1. Resolve one parent Cake with `python3 scripts/slice.py read-cake --cake '<stable-id-or-url>'`. Discover available facts before asking questions. If there is no stable parent Cake, shape a conversational draft but do not write it.
+2. Confirm one chosen direction. If choosing between Cakes or directions is the real problem, stop and use `cake-prioritise`.
+3. Read an existing canonical Slice with `read-slice` when reshaping it. Never edit a Plate proxy as though it were canonical.
+4. Shape one candidate internally and repair every failed quality gate before presenting it. Ask one material decision question at a time, with a recommendation.
+5. Use the Cake's stored Slice source. For a Pantry Cake without one, accept the source selected by `cake-prioritise` via `--slice-source`; do not update the Cake yourself.
+6. Run `create` or `update` without an apply token. Show the exact returned write and wait for explicit approval.
+7. Re-run the identical command with `--apply-token '<confirmation-token>'`. A stale token requires a fresh preview and approval.
+8. Return the canonical Slice URL or ID to `cake-prioritise`. Do not nominate it or put it on Plate.
 
 ## Quality gates
 
-A slice must:
+A Slice must have one coherent Outcome, be independently finishable, have observable Success, advance its Cake's Direction, and include only infrastructure needed for that outcome. Add `Not included` only to resolve meaningful ambiguity. Never use an implementation checklist as the Slice contract.
 
-- express one coherent outcome;
-- be independently finishable, without requiring another unfinished slice;
-- have observable success criteria;
-- advance the chosen direction;
-- include only the infrastructure needed for this outcome; and
-- omit implementation steps and checklists.
+Uncertainty reduction can be a valid Outcome when it resolves a named risk and has observable Success.
 
-A slice may deliver usable value, reduce uncertainty, or do both. Pure technical enablement qualifies only when it independently resolves a named risk or uncertainty.
+## Canonical contract
 
-## Card contract
-
-Use this exact shape:
+The title is `[Cake]: [Slice]`. The canonical body is:
 
 ```text
-Title: [Project]: [Slice]
-
-Outcome: [one short sentence]
-Success: [one short observable sentence]
-Not included: [one essential boundary, only when omission creates real ambiguity]
+Cake: <stable Cake URL or ID>
+Outcome: <one short sentence>
+Success: <one short observable sentence>
+Not included: <optional essential boundary>
+Disposition: Candidate
 ```
 
-Keep the project name and slice title scannable. Never add an implementation checklist.
+Current membership is derived from Plate, not copied into an editable second definition. A Plate-native candidate is an archived card; a GitHub Slice gets a lightweight Plate proxy only when `cake-prioritise` pulls it.
 
-## Trello operations
+## Helper
 
-Use `scripts/cake_trello.py` for deterministic reads, configuration, previews, and writes. Run it relative to this skill directory.
-
-### Update an input card
-
-Preview without writing:
+Run commands from this skill directory.
 
 ```bash
-python3 scripts/cake_trello.py update-card \
-  --card '<url-or-id>' \
-  --title '<Project>: <Slice>' \
+python3 scripts/slice.py read-cake --cake '<cake>'
+python3 scripts/slice.py read-slice --cake '<cake>' --slice '<canonical-slice>'
+
+python3 scripts/slice.py create \
+  --cake '<cake>' \
+  --title '<Cake>: <Slice>' \
   --outcome '<outcome>' \
   --success '<success>' \
   --not-included '<boundary>'
-```
 
-Show the returned draft to the user. After approval, repeat the command with `--apply-token '<token>'`. The helper preserves the previous card title and description in a Trello comment before changing the card.
-
-### Create a card from a repository
-
-First resolve the persisted destination:
-
-```bash
-python3 scripts/cake_trello.py config get --repo '<repo-path>'
-```
-
-If no destination exists, ask for the board and list, then persist them:
-
-```bash
-python3 scripts/cake_trello.py config set --repo '<repo-path>' --board '<board>' --list '<list>'
-```
-
-Preview a new card:
-
-```bash
-python3 scripts/cake_trello.py create-card \
-  --repo '<repo-path>' \
-  --title '<Project>: <Slice>' \
+python3 scripts/slice.py update \
+  --cake '<cake>' \
+  --slice '<canonical-slice>' \
+  --title '<Cake>: <Slice>' \
   --outcome '<outcome>' \
-  --success '<success>' \
-  --not-included '<boundary>'
+  --success '<success>'
 ```
 
-After approval, repeat the command with `--apply-token '<token>'`.
-
-If Trello or destination configuration is unavailable, still produce the exact draft. Explain the missing dependency and do not claim the card was written.
+Add `--slice-source 'plate'` or a configured GitHub query only when the Cake does not store one yet. Add `--apply-token '<token>'` only after approval. If a provider is unavailable, still give the exact draft and say that nothing was written.
