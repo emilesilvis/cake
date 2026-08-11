@@ -14,7 +14,7 @@ from .domain import (
     parse_slice_contract,
     token_for,
 )
-from .portfolio import CakePortfolio, _compact_card
+from .portfolio import CakePortfolio, _card_ref, _compact_card
 
 
 BACKLINK_FIELD = "Cake Slice"
@@ -109,7 +109,7 @@ class CakeSlicer:
         if not title.strip():
             raise CakeError("A Slice needs a title")
         body = format_slice_contract(
-            cake["id"],
+            _card_ref(cake),
             outcome,
             success,
             not_included,
@@ -237,8 +237,9 @@ class CakeSlicer:
             created = self.portfolio.trello.card(created["id"])
 
         created_url = created.get("url") or created["id"]
+        created_ref = _card_ref(created)
         for delivery in preview["delivery_writes"]:
-            body = _backlink_body(delivery["source"]["body"], created_url)
+            body = _backlink_body(delivery["source"]["body"], created_ref)
             try:
                 self.portfolio.github.update_issue(
                     delivery["issue"], title=delivery["title"], body=body
@@ -293,7 +294,7 @@ class CakeSlicer:
             **target,
         }
         delivery_writes = self._delivery_writes_for_update(
-            current.get("github_issue"), github_issue, current["url"]
+            current.get("github_issue"), github_issue, _card_ref(current)
         )
         payload = {
             "operation": "update_slice",

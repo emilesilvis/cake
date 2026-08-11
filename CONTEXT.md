@@ -5,11 +5,11 @@ Cake is a personal portfolio system for deciding which enduring pursuits deserve
 ## Language
 
 **Cake**:
-A portfolio-level pursuit or direction that can yield one or more Slices. A Cake may be finite or long-lived, but it is always distinct from the actions used to advance it.
+A portfolio-level pursuit or direction that can yield one or more Slices. Its card links to every current Slice as derived navigation, while Plate remains authoritative for currentness.
 _Avoid_: Project, task, initiative
 
 **Slice**:
-One independently finishable outcome with observable success, exactly one parent Cake, and exactly one canonical record on Plate. External work items may be linked to a Slice but never replace it.
+One independently finishable outcome with observable success, exactly one parent Cake, and exactly one canonical record on Plate. Its card links back to its parent Cake with a clickable Trello reference.
 _Avoid_: Task, implementation step, entire Cake
 
 **Pantry**:
@@ -25,8 +25,12 @@ The sole registry for Slices and the authority for whether a Slice is current wo
 _Avoid_: Backlog, next queue, task list
 
 **Next Slice**:
-The single validated Plate Slice referenced by a Cake as its next pull-ready candidate. It is not current and leaves this role when pulled into current Plate work.
+The single validated Plate Slice linked by a waiting Cake as its next pull-ready candidate. It is mutually exclusive with Current Slices and leaves this role when pulled into current Plate work.
 _Avoid_: Current Slice, slice queue
+
+**Cake–Slice Link**:
+A reciprocal clickable Trello reference in stable `https://trello.com/c/<shortLink>` form between a Cake and each current Slice. The Slice-to-Cake link identifies its parent; Cake-to-Slice links are derived navigation and never decide currentness. Membership transitions maintain both sides.
+_Avoid_: UUID, copied status, alternate source of truth
 
 **Delivery Link**:
 An optional reciprocal reference between a Slice and an external work item such as a GitHub issue. Both records link to each other, while the Plate Slice alone owns identity and currentness.

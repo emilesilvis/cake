@@ -17,7 +17,7 @@ Read `../../CONTEXT.md` completely before acting. Produce exactly one bounded Sl
 6. A GitHub issue is an optional Delivery Link, not a prerequisite or canonical Slice. Only link an issue that already represents delivery of the same outcome. When linked, include `GitHub issue:` on Trello and maintain `Cake Slice:` in the GitHub issue body so navigation works both ways.
 7. Run `create` or `update` without an apply token. Show the exact returned write and wait for explicit approval.
 8. Re-run the identical command with `--apply-token '<confirmation-token>'`. A stale token requires a fresh preview and approval. If a linked GitHub issue changed, preview the reciprocal-link write again.
-9. Return the canonical Slice URL or ID to `cake-prioritise`. Do not nominate it or put it on Plate.
+9. Return the canonical Slice URL to `cake-prioritise`. Do not nominate it or make it current.
 
 ## Quality gates
 
@@ -30,7 +30,7 @@ Uncertainty reduction can be a valid Outcome when it resolves a named risk and h
 The title is `[Cake]: [Slice]`. The canonical body is:
 
 ```text
-Cake: <stable Cake URL or ID>
+Cake: https://trello.com/c/<stable-parent-short-link>
 Outcome: <one short sentence>
 Success: <one short observable sentence>
 Not included: <optional essential boundary>
@@ -38,7 +38,7 @@ GitHub issue: <optional GitHub delivery issue URL>
 Disposition: Candidate
 ```
 
-Plate is the sole canonical registry. A candidate, paused, finished, or abandoned Slice is an archived Plate card. A current Slice is an open card in `Eating` or `Blocked`. Never create a Slice only in GitHub or on Cake Stand.
+The `Cake:` value is always a clickable Trello short URL, never a UUID. Plate is the sole canonical registry. A candidate, paused, finished, or abandoned Slice is an archived Plate card. A current Slice is an open card in `Eating` or `Blocked`. Never create a Slice only in GitHub or on Cake Stand.
 
 ## Helper
 

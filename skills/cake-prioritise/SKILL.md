@@ -22,11 +22,12 @@ Read `../../CONTEXT.md` completely before acting. Choose focus in the context of
 ## State rules
 
 - Pantry contains possible, still-ill-defined Cakes. Cake Stand contains only Cakes. Admission to Cake Stand is an explicit commitment with Direction and either a valid Next Slice or a current Slice.
-- A Cake with any Plate Slice is **Being Eaten**. A Cake on the Stand without one is **Waiting on the Stand** and must have exactly one valid Next Slice.
-- Only the nominated Next Slice may be pulled. `cake-prioritise` may replace that nomination whenever priorities change. Pulling clears the pointer. To add another current Slice for the same Cake, nominate and pull it in the same plan.
+- A Cake with any Plate Slice is **Being Eaten** and its `Current slices:` field must link to every current Slice with stable `https://trello.com/c/<shortLink>` URLs. A Cake on the Stand without one is **Waiting on the Stand** and must have exactly one valid `Next slice:` link in the same URL form. Current and Next Slice links are mutually exclusive; Plate membership remains authoritative.
+- Every Slice has a reciprocal `Cake:` link to its parent in the same stable Trello URL form. Never store a Cake or Slice UUID as a cross-link. Every membership transition must update both sides before it is complete.
+- Only the nominated Next Slice may be pulled. `cake-prioritise` may replace that nomination whenever priorities change. Pulling replaces the Cake's Next Slice link with a Current Slice link. To add another current Slice for the same Cake, nominate and pull it in the same plan.
 - Plate is the sole canonical registry for every Slice and the source of truth for current WIP. Open cards live in Eating or Blocked; non-current Slice cards stay archived on Plate. Finish, Pause, or Abandon archives a Slice; Abandon requires a reason.
 - A Slice may link to a GitHub delivery issue, but Trello remains canonical. If present, the Trello `GitHub issue:` and GitHub `Cake Slice:` links must be reciprocal.
-- When the last current Slice exits, nominate another Slice or Park/Finish the parent Cake in the same plan. A Cake cannot leave the Stand while one of its Slices remains on Plate.
+- Exiting a Slice removes its Cake-side Current Slice link. When the last current Slice exits, nominate another Slice or Park/Finish the parent Cake in the same plan. A Cake cannot leave the Stand while one of its Slices remains on Plate.
 - Parked and Finished Cakes live alongside the active Cake Stand list but are not active membership. A stable habit may Finish as a Cake and continue as a capacity constraint.
 - Limits strongly discourage overage and require explicit review; they do not mechanically block it.
 

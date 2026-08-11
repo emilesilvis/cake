@@ -60,15 +60,17 @@ A mature Cake keeps this short contract on its card:
 ```text
 Direction: What this Cake is trying to change
 Finished when: Optional genuine ending
-Next slice: One canonical Slice URL or ID, only while waiting
+Current slices: https://trello.com/c/<stable-short-link>
+- https://trello.com/c/<another-stable-short-link>
+Next slice: https://trello.com/c/<stable-short-link>
 ```
 
-Current Slice links are derived from Plate and are never written into the Cake card.
+`Current slices` is written only while the Cake is Being Eaten; `Next slice` is written only while it is Waiting. They are mutually exclusive. Plate membership remains authoritative for currentness, and the Cake-side links are synchronized navigation.
 
 A canonical Slice contains:
 
 ```text
-Cake: Stable parent Cake URL or ID
+Cake: https://trello.com/c/<stable-parent-short-link>
 Outcome: One independently finishable result
 Success: One observable test
 Not included: Optional essential boundary
@@ -76,7 +78,7 @@ GitHub issue: Optional delivery issue URL
 Disposition: Candidate
 ```
 
-When a Slice has a GitHub delivery issue, the Trello card links to it with `GitHub issue:` and the GitHub issue links back with `Cake Slice:`. Trello remains canonical; a GitHub issue is never a second Slice record. GitHub access requires an authenticated `gh` CLI only when such a link is used.
+Every Cake–Slice reference is a clickable Trello short URL, not a UUID. When a Slice has a GitHub delivery issue, the Trello card links to it with `GitHub issue:` and the GitHub issue links back with `Cake Slice:`. Trello remains canonical; a GitHub issue is never a second Slice record. GitHub access requires an authenticated `gh` CLI only when such a link is used.
 
 All state-changing helpers preview exact transitions first and bind approval to the observed source state. WIP limits strongly discourage over-commitment, but an explicitly reviewed overage can proceed.
 

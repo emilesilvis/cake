@@ -16,13 +16,17 @@ from .domain import (
     parse_cake_contract,
     parse_slice_contract,
     preview_transition,
+    trello_card_url,
     validate_snapshot,
 )
 from .providers import GitHubAdapter, TrelloAdapter
 
 
 def _card_ref(card: dict[str, Any]) -> str:
-    return card.get("url") or card["id"]
+    short_link = card.get("shortLink") or card.get("raw", {}).get("shortLink")
+    if short_link:
+        return f"https://trello.com/c/{short_link}"
+    return trello_card_url(card.get("url") or card["id"])
 
 
 def _compact_card(card: dict[str, Any]) -> dict[str, Any]:
@@ -253,7 +257,7 @@ class CakePortfolio:
             for current in snapshot["plate"][lane]:
                 parents = [cake for cake in on_stand if _record_matches(cake, current.get("cake"))]
                 if len(parents) == 1:
-                    parents[0]["current_slices"].append(current.get("slice") or current.get("url"))
+                    parents[0]["current_slices"].append(_card_ref(current))
         for cake in on_stand:
             cake["condition"] = (
                 "being_eaten" if cake["current_slices"] else "waiting_on_the_stand"
@@ -340,9 +344,31 @@ class CakePortfolio:
             )
         applied: list[dict[str, Any]] = []
         try:
-            for operation in operations:
+            index = 0
+            while index < len(operations):
+                operation = operations[index]
+                following = operations[index + 1] if index + 1 < len(operations) else None
+                if (
+                    operation.get("action") == "nominate"
+                    and following
+                    and following.get("action") == "pull"
+                    and canonical_ref(operation.get("cake"))
+                    == canonical_ref(following.get("cake"))
+                ):
+                    snapshot = self.snapshot()
+                    cake = self._cake_record(snapshot, operation["cake"])
+                    candidate = self._candidate_record(snapshot, operation["slice"])
+                    self._pull_candidate(
+                        cake,
+                        candidate,
+                        following.get("lane", "eating"),
+                    )
+                    applied.extend((operation, following))
+                    index += 2
+                    continue
                 self._execute(operation)
                 applied.append(operation)
+                index += 1
         except CakeError as exc:
             raise CakeError(
                 f"Transition stopped after {len(applied)} of {len(operations)} operations; "
@@ -381,12 +407,14 @@ class CakePortfolio:
             "direction": cake.get("direction"),
             "finished_when": cake.get("finished_when"),
             "next_slice": cake.get("next_slice"),
+            "current_slices": cake.get("current_slices", []),
             **changes,
         }
         description = format_cake_contract(
             values["direction"],
             values.get("next_slice"),
             values.get("finished_when"),
+            values.get("current_slices"),
         )
         self.trello.update_card(cake["id"], description=description)
 
@@ -396,26 +424,17 @@ class CakePortfolio:
         if action == "nominate":
             cake = self._cake_record(snapshot, operation["cake"])
             candidate = self._candidate_record(snapshot, operation["slice"])
-            self._update_cake(cake, next_slice=candidate["url"])
+            self._update_cake(cake, next_slice=_card_ref(candidate))
             return
 
         if action == "pull":
             cake = self._cake_record(snapshot, operation["cake"])
             candidate = self._candidate_record(snapshot, cake["next_slice"])
-            _, plate_lists = self._trello_role("plate")
-            target_list = plate_lists[normalize(operation.get("lane", "eating")).replace(" ", "_")]
-            description = format_slice_contract(
-                cake["id"],
-                candidate["outcome"],
-                candidate["success"],
-                candidate.get("not_included"),
-                "current",
-                github_issue=candidate.get("github_issue"),
+            self._pull_candidate(
+                cake,
+                candidate,
+                operation.get("lane", "eating"),
             )
-            self.trello.update_card(
-                candidate["id"], description=description, list_id=target_list["id"], closed=False
-            )
-            self._update_cake(cake, next_slice=None)
             return
 
         if action == "exit":
@@ -425,7 +444,7 @@ class CakePortfolio:
             reason = operation.get("reason")
             candidate = self._candidate_record(snapshot, current.get("slice") or current["url"])
             description = format_slice_contract(
-                parent["id"],
+                _card_ref(parent),
                 candidate["outcome"],
                 candidate["success"],
                 candidate.get("not_included"),
@@ -435,10 +454,24 @@ class CakePortfolio:
             )
             self.trello.update_card(candidate["id"], description=description, closed=True)
 
+            remaining = [
+                item
+                for item in (*snapshot["plate"]["eating"], *snapshot["plate"]["blocked"])
+                if item is not current and _record_matches(parent, item.get("cake"))
+            ]
+            remaining_refs = [_card_ref(item) for item in remaining]
+
             if operation.get("next_slice"):
-                self._update_cake(parent, next_slice=operation["next_slice"])
+                next_slice = self._candidate_record(snapshot, operation["next_slice"])
+                self._update_cake(
+                    parent,
+                    next_slice=_card_ref(next_slice),
+                    current_slices=remaining_refs,
+                )
             elif operation.get("cake_state"):
                 self._move_cake_card(parent, operation["cake_state"], operation)
+            else:
+                self._update_cake(parent, next_slice=None, current_slices=remaining_refs)
             return
 
         if action == "move_cake":
@@ -472,6 +505,31 @@ class CakePortfolio:
 
         raise CakeError(f"Unknown transition action {action!r}")
 
+    def _pull_candidate(
+        self,
+        cake: dict[str, Any],
+        candidate: dict[str, Any],
+        lane: str,
+    ) -> None:
+        _, plate_lists = self._trello_role("plate")
+        target_list = plate_lists[normalize(lane).replace(" ", "_")]
+        description = format_slice_contract(
+            _card_ref(cake),
+            candidate["outcome"],
+            candidate["success"],
+            candidate.get("not_included"),
+            "current",
+            github_issue=candidate.get("github_issue"),
+        )
+        self.trello.update_card(
+            candidate["id"], description=description, list_id=target_list["id"], closed=False
+        )
+        self._update_cake(
+            cake,
+            next_slice=None,
+            current_slices=[*cake.get("current_slices", []), _card_ref(candidate)],
+        )
+
     def _move_cake_card(
         self, cake: dict[str, Any], target: str, operation: dict[str, Any]
     ) -> None:
@@ -486,13 +544,19 @@ class CakePortfolio:
             "direction": operation.get("direction", cake.get("direction")),
             "finished_when": operation.get("finished_when", cake.get("finished_when")),
             "next_slice": operation.get("next_slice", cake.get("next_slice")),
+            "current_slices": cake.get("current_slices", []),
         }
         if target in {"parked", "finished"}:
             values["next_slice"] = None
+            values["current_slices"] = []
+        elif operation.get("next_slice"):
+            candidate = self._candidate_record(self.snapshot(), operation["next_slice"])
+            values["next_slice"] = _card_ref(candidate)
         changes["description"] = format_cake_contract(
             values["direction"],
             values.get("next_slice"),
             values.get("finished_when"),
+            values.get("current_slices"),
         )
         changes["board_id"] = stand_board["id"]
         changes["list_id"] = stand_lists[target]["id"]

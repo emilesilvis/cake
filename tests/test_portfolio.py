@@ -10,9 +10,9 @@ from cake_core.portfolio import CakePortfolio
 class FakeTrello:
     def __init__(self) -> None:
         self.boards = {
-            "Pantry": {"id": "pantry", "name": "Pantry", "url": "https://trello.test/b/pantry"},
-            "Cake Stand": {"id": "stand", "name": "Cake Stand", "url": "https://trello.test/b/stand"},
-            "Plate": {"id": "plate", "name": "Plate", "url": "https://trello.test/b/plate"},
+            "Pantry": {"id": "pantry", "name": "Pantry", "url": "https://trello.com/b/pantry"},
+            "Cake Stand": {"id": "stand", "name": "Cake Stand", "url": "https://trello.com/b/stand"},
+            "Plate": {"id": "plate", "name": "Plate", "url": "https://trello.com/b/plate"},
         }
         self.board_lists = {
             "stand": {
@@ -60,7 +60,8 @@ class FakeGitHub:
 def card(identifier, board, list_id, name, description, *, closed=False, position=1):
     return {
         "id": identifier,
-        "url": f"https://trello.test/c/{identifier}",
+        "url": f"https://trello.com/c/{identifier}",
+        "shortLink": identifier,
         "idBoard": board,
         "idList": list_id,
         "name": name,
@@ -98,7 +99,7 @@ def config():
 class PortfolioTest(unittest.TestCase):
     def test_plate_derives_being_eaten_from_a_canonical_slice_with_delivery_link(self) -> None:
         trello = FakeTrello()
-        cake_url = "https://trello.test/c/blog"
+        cake_url = "https://trello.com/c/blog"
         issue_url = "https://github.com/example/blog/issues/7"
         trello.board_cards["stand"] = [
             card(
@@ -106,7 +107,10 @@ class PortfolioTest(unittest.TestCase):
                 "stand",
                 "on",
                 "handwritten.blog",
-                format_cake_contract("Help readers discover writing"),
+                format_cake_contract(
+                    "Help readers discover writing",
+                    current_slices=["https://trello.com/c/feed"],
+                ),
             )
         ]
         trello.board_cards["plate"] = [
@@ -128,15 +132,18 @@ class PortfolioTest(unittest.TestCase):
         result = portfolio.snapshot()
         active_cake = result["cake_stand"]["on_stand"][0]
         self.assertEqual(active_cake["condition"], "being_eaten")
-        self.assertEqual(active_cake["current_slices"], ["https://trello.test/c/feed"])
+        self.assertEqual(active_cake["current_slices"], ["https://trello.com/c/feed"])
+        self.assertEqual(
+            active_cake["current_slice_links"], ["https://trello.com/c/feed"]
+        )
         self.assertEqual(result["plate"]["eating"][0]["outcome"], "Readers can discover posts")
         self.assertEqual(result["plate"]["eating"][0]["github_issue"], issue_url)
         self.assertEqual(result["issues"]["errors"], [])
 
     def test_waiting_cake_derives_waiting_condition(self) -> None:
         trello = FakeTrello()
-        cake_url = "https://trello.test/c/piano"
-        slice_url = "https://trello.test/c/scales"
+        cake_url = "https://trello.com/c/piano"
+        slice_url = "https://trello.com/c/scales"
         trello.board_cards["stand"] = [
             card(
                 "piano",
@@ -162,6 +169,92 @@ class PortfolioTest(unittest.TestCase):
             result["cake_stand"]["on_stand"][0]["condition"], "waiting_on_the_stand"
         )
         self.assertEqual(result["plate"]["eating"], [])
+
+    def test_pull_writes_reciprocal_short_links(self) -> None:
+        trello = FakeTrello()
+        cake_url = "https://trello.com/c/blog/a-long-cake-title"
+        slice_url = "https://trello.com/c/feed/a-long-slice-title"
+        trello.board_cards["stand"] = [
+            card(
+                "blog",
+                "stand",
+                "on",
+                "handwritten.blog",
+                format_cake_contract("Help readers", next_slice=slice_url),
+            )
+        ]
+        trello.board_cards["stand"][0]["url"] = cake_url
+        trello.board_cards["plate"] = [
+            card(
+                "feed",
+                "plate",
+                "eating",
+                "handwritten.blog: Discovery feed",
+                format_slice_contract(cake_url, "Readers find posts", "The feed works"),
+                closed=True,
+            )
+        ]
+        trello.board_cards["plate"][0]["url"] = slice_url
+        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
+
+        portfolio._execute({"action": "pull", "cake": cake_url, "lane": "eating"})
+
+        slice_write = trello.writes[0][1]
+        cake_write = trello.writes[1][1]
+        self.assertIn("Cake: https://trello.com/c/blog", slice_write["description"])
+        self.assertIn("Current slices: https://trello.com/c/feed", cake_write["description"])
+        self.assertNotIn("Next slice:", cake_write["description"])
+
+    def test_exit_replaces_the_last_current_link_with_next_slice(self) -> None:
+        trello = FakeTrello()
+        cake_url = "https://trello.com/c/blog"
+        current_url = "https://trello.com/c/feed"
+        next_url = "https://trello.com/c/search"
+        trello.board_cards["stand"] = [
+            card(
+                "blog",
+                "stand",
+                "on",
+                "handwritten.blog",
+                format_cake_contract("Help readers", current_slices=[current_url]),
+            )
+        ]
+        trello.board_cards["plate"] = [
+            card(
+                "feed",
+                "plate",
+                "eating",
+                "handwritten.blog: Discovery feed",
+                format_slice_contract(
+                    cake_url,
+                    "Readers find posts",
+                    "The feed works",
+                    disposition="current",
+                ),
+            ),
+            card(
+                "search",
+                "plate",
+                "eating",
+                "handwritten.blog: Search",
+                format_slice_contract(cake_url, "Readers search", "Search works"),
+                closed=True,
+            ),
+        ]
+        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
+
+        portfolio._execute(
+            {
+                "action": "exit",
+                "plate_slice": current_url,
+                "disposition": "finished",
+                "next_slice": next_url,
+            }
+        )
+
+        cake_write = trello.writes[1][1]
+        self.assertIn("Next slice: https://trello.com/c/search", cake_write["description"])
+        self.assertNotIn("Current slices:", cake_write["description"])
 
     def test_apply_rejects_stale_confirmation_before_writing(self) -> None:
         portfolio = CakePortfolio(config=config(), trello=FakeTrello(), github=FakeGitHub())

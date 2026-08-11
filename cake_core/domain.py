@@ -9,7 +9,7 @@ import re
 from typing import Any, Iterable
 
 
-CAKE_FIELDS = ("Direction", "Finished when", "Next slice")
+CAKE_FIELDS = ("Direction", "Finished when", "Current slices", "Next slice")
 SLICE_FIELDS = (
     "Cake",
     "Outcome",
@@ -33,6 +33,33 @@ def normalize(value: str) -> str:
     return " ".join(value.casefold().strip().split())
 
 
+def trello_card_short_link(value: str | None) -> str | None:
+    """Return a Trello card's stable short link from any normal card URL."""
+
+    if not value:
+        return None
+    match = re.fullmatch(
+        r"https://(?:www\.)?trello\.com/c/([A-Za-z0-9_-]+)(?:/[^\s?#]*)?"
+        r"(?:\?[^\s#]*)?(?:#[^\s]*)?/?",
+        value.strip(),
+        flags=re.IGNORECASE,
+    )
+    return match.group(1) if match else None
+
+
+def is_trello_card_url(value: str | None) -> bool:
+    return trello_card_short_link(value) is not None
+
+
+def trello_card_url(value: str) -> str:
+    """Canonicalize a Trello card URL to its stable, clickable short URL."""
+
+    short_link = trello_card_short_link(value)
+    if not short_link:
+        raise CakeError("A Cake–Slice reference must be a Trello card URL")
+    return f"https://trello.com/c/{short_link}"
+
+
 def canonical_ref(value: str | None) -> str | None:
     """Normalize an opaque ID or URL enough for stable equality checks."""
 
@@ -41,6 +68,9 @@ def canonical_ref(value: str | None) -> str | None:
     result = value.strip()
     if not result:
         return None
+    short_link = trello_card_short_link(result)
+    if short_link:
+        return f"trello-card:{short_link.casefold()}"
     return result.rstrip("/").casefold()
 
 
@@ -61,6 +91,9 @@ def _parse_fields(text: str, allowed: Iterable[str]) -> dict[str, str]:
             result[current] = match.group(2).strip()
             continue
         if match:
+            if current and raw_line.lstrip().startswith("- "):
+                result[current] = f"{result[current]}\n{raw_line.rstrip()}".strip()
+                continue
             current = None
             continue
         if current and raw_line.strip():
@@ -73,11 +106,37 @@ def _format_fields(values: Iterable[tuple[str, str | None]]) -> str:
     return "\n".join(lines)
 
 
-def parse_cake_contract(text: str) -> dict[str, str | None]:
+def _parse_reference_list(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [
+        line.strip().removeprefix("- ").strip()
+        for line in value.splitlines()
+        if line.strip().removeprefix("- ").strip()
+    ]
+
+
+def _format_reference_list(values: Iterable[str]) -> str | None:
+    canonical: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        reference = trello_card_url(value)
+        key = canonical_ref(reference)
+        if key not in seen:
+            canonical.append(reference)
+            assert key
+            seen.add(key)
+    if not canonical:
+        return None
+    return "\n".join((canonical[0], *(f"- {value}" for value in canonical[1:])))
+
+
+def parse_cake_contract(text: str) -> dict[str, Any]:
     fields = _parse_fields(text, CAKE_FIELDS)
     return {
         "direction": fields.get("Direction") or None,
         "finished_when": fields.get("Finished when") or None,
+        "current_slice_links": _parse_reference_list(fields.get("Current slices")),
         "next_slice": fields.get("Next slice") or None,
     }
 
@@ -86,14 +145,20 @@ def format_cake_contract(
     direction: str,
     next_slice: str | None = None,
     finished_when: str | None = None,
+    current_slices: Iterable[str] | None = None,
 ) -> str:
     if not direction.strip():
         raise CakeError("A mature Cake needs a Direction")
+    current_slice_links = _format_reference_list(current_slices or [])
+    canonical_next = trello_card_url(next_slice) if next_slice else None
+    if current_slice_links and canonical_next:
+        raise CakeError("A Cake cannot have Current slices and a Next slice at the same time")
     return _format_fields(
         (
             ("Direction", direction),
             ("Finished when", finished_when),
-            ("Next slice", next_slice),
+            ("Current slices", current_slice_links),
+            ("Next slice", canonical_next),
         )
     )
 
@@ -133,8 +198,7 @@ def format_slice_contract(
     reason: str | None = None,
     github_issue: str | None = None,
 ) -> str:
-    if not cake.strip():
-        raise CakeError("A Slice needs exactly one parent Cake")
+    canonical_cake = trello_card_url(cake)
     if not outcome.strip():
         raise CakeError("A Slice needs one finishable Outcome")
     if not success.strip():
@@ -148,7 +212,7 @@ def format_slice_contract(
         raise CakeError("A Slice's GitHub issue must be a GitHub issue URL")
     return _format_fields(
         (
-            ("Cake", cake),
+            ("Cake", canonical_cake),
             ("Outcome", outcome),
             ("Success", success),
             ("Not included", not_included),
@@ -246,11 +310,56 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
         cake_key = canonical_ref(cake.get("url") or cake.get("id"))
         current = current_by_cake.get(cake_key or "", [])
         next_slice = cake.get("next_slice")
+        stored_current = list(cake.get("current_slice_links") or [])
+        expected_current: list[str] = []
+        for current_slice in current:
+            try:
+                expected_current.append(
+                    trello_card_url(current_slice.get("slice") or current_slice.get("url"))
+                )
+            except (CakeError, TypeError):
+                errors.append(
+                    {
+                        "code": "invalid_current_slice_url",
+                        "cake": cake.get("url") or cake.get("id"),
+                        "slice": current_slice.get("slice") or current_slice.get("url"),
+                    }
+                )
+        invalid_current_links = [
+            reference for reference in stored_current if not is_trello_card_url(reference)
+        ]
+        if invalid_current_links:
+            errors.append(
+                {
+                    "code": "invalid_current_slice_links",
+                    "cake": cake.get("url") or cake.get("id"),
+                    "slices": invalid_current_links,
+                }
+            )
+        if [canonical_ref(value) for value in stored_current] != [
+            canonical_ref(value) for value in expected_current
+        ]:
+            errors.append(
+                {
+                    "code": "current_slice_links_drift",
+                    "cake": cake.get("url") or cake.get("id"),
+                    "actual": stored_current,
+                    "expected": expected_current,
+                }
+            )
         if not cake.get("direction"):
             errors.append({"code": "missing_direction", "cake": cake.get("url") or cake.get("id")})
         if not current and not next_slice:
             errors.append({"code": "waiting_without_next_slice", "cake": cake.get("url") or cake.get("id")})
         if not current and next_slice:
+            if not is_trello_card_url(next_slice):
+                errors.append(
+                    {
+                        "code": "invalid_next_slice_link",
+                        "cake": cake.get("url") or cake.get("id"),
+                        "slice": next_slice,
+                    }
+                )
             matching_next = [record for record in catalog if _record_matches(record, next_slice)]
             valid_next = len(matching_next) == 1
             if valid_next:
@@ -296,6 +405,14 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
             )
             continue
         parent_matches = [cake for cake in cakes if _record_matches(cake, slice_record["cake"])]
+        if not is_trello_card_url(slice_record["cake"]):
+            errors.append(
+                {
+                    "code": "invalid_slice_cake_link",
+                    "slice": slice_record.get("url") or slice_record.get("id"),
+                    "cake": slice_record["cake"],
+                }
+            )
         if len(parent_matches) != 1:
             errors.append(
                 {
@@ -415,7 +532,7 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
         candidate_reference = canonical_ref(candidate.get("url") or candidate.get("id"))
         if any(_current_key(current) == candidate_reference for current in plate):
             raise CakeError("A current Slice cannot also be Next Slice")
-        cake["next_slice"] = candidate.get("url") or candidate.get("id")
+        cake["next_slice"] = trello_card_url(candidate.get("url") or candidate.get("id"))
         return
 
     if action == "pull":
@@ -423,7 +540,7 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
         if not cake.get("next_slice"):
             raise CakeError("Only a Cake's nominated Next Slice can be pulled")
         candidate = _candidate_for(snapshot, cake, cake["next_slice"])
-        candidate_ref = candidate.get("url") or candidate.get("id")
+        candidate_ref = trello_card_url(candidate.get("url") or candidate.get("id"))
         if any(_current_key(current) == canonical_ref(candidate_ref) for current in plate):
             raise CakeError("The nominated Slice is already on Plate")
         lane = normalize(operation.get("lane", "eating")).replace(" ", "_")
@@ -433,7 +550,7 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
             **deepcopy(candidate),
             "id": f"planned:{index}",
             "plate_card": None,
-            "cake": cake.get("url") or cake.get("id"),
+            "cake": trello_card_url(cake.get("url") or cake.get("id")),
             "slice": candidate_ref,
             "lane": lane,
             "canonical_on_plate": True,
@@ -441,6 +558,10 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
         }
         snapshot.setdefault("plate", {}).setdefault(lane, []).append(current)
         candidate["disposition"] = "current"
+        cake["current_slice_links"] = [
+            *(cake.get("current_slice_links") or []),
+            candidate_ref,
+        ]
         cake["next_slice"] = None
         return
 
@@ -464,6 +585,10 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
             matching[0]["reason"] = reason
         parent = _find(cakes, current["cake"], "parent Cake")
         remaining = [item for item in _plate_records(snapshot) if _record_matches(parent, item.get("cake", ""))]
+        parent["current_slice_links"] = [
+            trello_card_url(item.get("slice") or item.get("url") or item.get("id"))
+            for item in remaining
+        ]
         if remaining:
             if operation.get("next_slice") or operation.get("cake_state"):
                 raise CakeError("Do not resolve the parent while another of its Slices remains on Plate")
@@ -472,7 +597,7 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
             if parent.get("state") != "on_stand":
                 raise CakeError("Only a Cake on the Cake Stand can receive a Next Slice")
             candidate = _candidate_for(snapshot, parent, operation["next_slice"])
-            parent["next_slice"] = candidate.get("url") or candidate.get("id")
+            parent["next_slice"] = trello_card_url(candidate.get("url") or candidate.get("id"))
             return
         target = operation.get("cake_state")
         if target not in {"parked", "finished"}:
@@ -480,6 +605,7 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
                 "When a Cake's last Plate Slice exits, nominate another Slice or Park/Finish the Cake"
             )
         _move_cake(snapshot, parent, target)
+        parent["current_slice_links"] = []
         parent["next_slice"] = None
         return
 
@@ -498,9 +624,12 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
         current = [item for item in plate if _record_matches(cake, item.get("cake", ""))]
         if source == "on_stand" and target != "on_stand" and current:
             raise CakeError("Resolve every current Slice before moving its Cake off the Cake Stand")
-        for field in ("direction", "finished_when", "next_slice"):
+        for field in ("direction", "finished_when"):
             if field in operation:
                 cake[field] = operation[field] or None
+        if "next_slice" in operation:
+            candidate = _candidate_for(snapshot, cake, operation["next_slice"])
+            cake["next_slice"] = trello_card_url(candidate.get("url") or candidate.get("id"))
         if target == "on_stand":
             if not cake.get("direction"):
                 raise CakeError("A Cake needs a Direction before promotion")
@@ -510,6 +639,7 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
                 _candidate_for(snapshot, cake, cake["next_slice"])
         _move_cake(snapshot, cake, target)
         if target in {"parked", "finished"}:
+            cake["current_slice_links"] = []
             cake["next_slice"] = None
         return
 
@@ -811,6 +941,7 @@ def _transition_source_projection(
                     "state",
                     "direction",
                     "finished_when",
+                    "current_slice_links",
                     "next_slice",
                     "position",
                 ),

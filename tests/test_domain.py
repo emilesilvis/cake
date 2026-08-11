@@ -8,9 +8,12 @@ from cake_core.domain import (
     format_cake_contract,
     format_slice_contract,
     is_github_issue_url,
+    is_trello_card_url,
     parse_cake_contract,
     parse_slice_contract,
     preview_transition,
+    canonical_ref,
+    trello_card_url,
     validate_snapshot,
 )
 
@@ -18,11 +21,12 @@ from cake_core.domain import (
 def cake(reference: str, *, next_slice: str | None = None) -> dict:
     return {
         "id": reference,
-        "url": f"https://trello.test/c/{reference}",
+        "url": f"https://trello.com/c/{reference}",
         "name": reference,
         "state": "on_stand",
         "direction": "Make useful progress",
         "finished_when": None,
+        "current_slice_links": [],
         "next_slice": next_slice,
     }
 
@@ -30,7 +34,7 @@ def cake(reference: str, *, next_slice: str | None = None) -> dict:
 def slice_record(reference: str, parent: dict, disposition: str = "candidate") -> dict:
     return {
         "id": reference,
-        "url": f"https://trello.test/c/{reference}",
+        "url": f"https://trello.com/c/{reference}",
         "name": reference,
         "cake": parent["url"],
         "outcome": "One result exists",
@@ -44,10 +48,15 @@ def slice_record(reference: str, parent: dict, disposition: str = "candidate") -
 
 
 def snapshot(cakes: list[dict], slices: list[dict], eating: list[dict] | None = None) -> dict:
+    current_slices = eating or []
+    for parent in cakes:
+        parent["current_slice_links"] = [
+            item["url"] for item in current_slices if canonical_ref(item["cake"]) == canonical_ref(parent["url"])
+        ]
     return {
         "pantry": [],
         "cake_stand": {"on_stand": cakes, "parked": [], "finished": []},
-        "plate": {"eating": eating or [], "blocked": []},
+        "plate": {"eating": current_slices, "blocked": []},
         "slice_catalog": slices,
         "source_health": [],
     }
@@ -69,25 +78,53 @@ def current(record: dict, parent: dict, lane: str = "eating") -> dict:
 class ContractTest(unittest.TestCase):
     def test_contracts_round_trip(self) -> None:
         cake_body = format_cake_contract(
-            "Publish consistently", "https://trello.test/c/slice", "Habit is stable"
+            "Publish consistently", "https://trello.com/c/slice", "Habit is stable"
         )
         self.assertEqual(
             parse_cake_contract(cake_body),
             {
                 "direction": "Publish consistently",
                 "finished_when": "Habit is stable",
-                "next_slice": "https://trello.test/c/slice",
+                "current_slice_links": [],
+                "next_slice": "https://trello.com/c/slice",
             },
         )
         slice_body = format_slice_contract(
-            "cake", "Discovery feed is usable", "A reader can discover posts", "Ranking"
+            "https://trello.com/c/cake",
+            "Discovery feed is usable",
+            "A reader can discover posts",
+            "Ranking",
         )
         self.assertEqual(parse_slice_contract(slice_body)["not_included"], "Ranking")
+
+    def test_current_slice_links_round_trip_as_stable_urls(self) -> None:
+        body = format_cake_contract(
+            "Publish consistently",
+            current_slices=(
+                "https://trello.com/c/alpha/a-long-title",
+                "https://www.trello.com/c/beta?filter=open",
+            ),
+        )
+        self.assertEqual(
+            parse_cake_contract(body)["current_slice_links"],
+            ["https://trello.com/c/alpha", "https://trello.com/c/beta"],
+        )
+
+    def test_trello_full_and_short_urls_are_the_same_reference(self) -> None:
+        self.assertEqual(
+            canonical_ref("https://trello.com/c/AbC123xy/a-card-title"),
+            canonical_ref("https://trello.com/c/AbC123xy"),
+        )
+        self.assertEqual(
+            trello_card_url("https://trello.com/c/AbC123xy/a-card-title"),
+            "https://trello.com/c/AbC123xy",
+        )
+        self.assertTrue(is_trello_card_url("https://trello.com/c/AbC123xy"))
 
     def test_optional_github_issue_round_trips_as_a_delivery_link(self) -> None:
         issue = "https://github.com/example/blog/issues/7"
         body = format_slice_contract(
-            "cake",
+            "https://trello.com/c/cake",
             "Discovery feed is usable",
             "A reader can discover posts",
             github_issue=issue,
@@ -97,16 +134,30 @@ class ContractTest(unittest.TestCase):
 
     def test_delivery_link_must_be_a_github_issue_url(self) -> None:
         with self.assertRaisesRegex(CakeError, "GitHub issue URL"):
-            format_slice_contract("cake", "Outcome", "Success", github_issue="https://github.com/example/blog")
+            format_slice_contract(
+                "https://trello.com/c/cake",
+                "Outcome",
+                "Success",
+                github_issue="https://github.com/example/blog",
+            )
 
     def test_abandon_requires_a_reason(self) -> None:
         with self.assertRaisesRegex(CakeError, "needs a reason"):
-            format_slice_contract("cake", "Outcome", "Success", disposition="abandoned")
+            format_slice_contract(
+                "https://trello.com/c/cake",
+                "Outcome",
+                "Success",
+                disposition="abandoned",
+            )
+
+    def test_slice_parent_must_be_a_clickable_trello_link(self) -> None:
+        with self.assertRaisesRegex(CakeError, "Trello card URL"):
+            format_slice_contract("a-card-id", "Outcome", "Success")
 
 
 class TransitionTest(unittest.TestCase):
     def test_pull_uses_only_next_slice_and_clears_pointer(self) -> None:
-        parent = cake("blog", next_slice="https://trello.test/c/feed")
+        parent = cake("blog", next_slice="https://trello.com/c/feed")
         candidate = slice_record("feed", parent)
         result = preview_transition(
             snapshot([parent], [candidate]),
@@ -114,6 +165,7 @@ class TransitionTest(unittest.TestCase):
         )
         target_parent = result["target"]["cake_stand"]["on_stand"][0]
         self.assertIsNone(target_parent["next_slice"])
+        self.assertEqual(target_parent["current_slice_links"], [candidate["url"]])
         self.assertEqual(result["target"]["plate"]["eating"][0]["slice"], candidate["url"])
 
     def test_nominate_and_pull_can_add_a_second_current_slice(self) -> None:
@@ -129,10 +181,14 @@ class TransitionTest(unittest.TestCase):
             ],
         )
         self.assertEqual(len(result["target"]["plate"]["eating"]), 2)
-        self.assertIsNone(result["target"]["cake_stand"]["on_stand"][0]["next_slice"])
+        target_parent = result["target"]["cake_stand"]["on_stand"][0]
+        self.assertIsNone(target_parent["next_slice"])
+        self.assertEqual(
+            target_parent["current_slice_links"], [first["url"], second["url"]]
+        )
 
     def test_cannot_pull_an_unnominated_slice(self) -> None:
-        parent = cake("piano", next_slice="https://trello.test/c/scales")
+        parent = cake("piano", next_slice="https://trello.com/c/scales")
         nominated = slice_record("scales", parent)
         with self.assertRaisesRegex(CakeError, "does not accept fields: slice"):
             preview_transition(
@@ -181,7 +237,7 @@ class TransitionTest(unittest.TestCase):
             )
 
     def test_blocked_slice_counts_toward_soft_plate_limit(self) -> None:
-        first_parent = cake("one", next_slice="https://trello.test/c/one-slice")
+        first_parent = cake("one", next_slice="https://trello.com/c/one-slice")
         second_parent = cake("two")
         first = slice_record("one-slice", first_parent)
         second = slice_record("two-slice", second_parent)
@@ -198,7 +254,7 @@ class TransitionTest(unittest.TestCase):
         self.assertFalse(warning["blocking"])
 
     def test_unrelated_existing_error_does_not_block_transition(self) -> None:
-        valid = cake("valid", next_slice="https://trello.test/c/valid-slice")
+        valid = cake("valid", next_slice="https://trello.com/c/valid-slice")
         broken = cake("broken")
         candidate = slice_record("valid-slice", valid)
         result = preview_transition(
@@ -209,7 +265,7 @@ class TransitionTest(unittest.TestCase):
         self.assertEqual(result["source_issues"]["errors"][0]["code"], "waiting_without_next_slice")
 
     def test_relevant_unavailable_source_fails_closed(self) -> None:
-        parent = cake("blog", next_slice="https://trello.test/c/feed")
+        parent = cake("blog", next_slice="https://trello.com/c/feed")
         candidate = slice_record("feed", parent)
         source = snapshot([parent], [candidate])
         source["source_health"] = [
@@ -224,12 +280,12 @@ class TransitionTest(unittest.TestCase):
             preview_transition(source, [{"action": "pull", "cake": parent["url"]}])
 
     def test_unknown_visible_plate_membership_fails_closed(self) -> None:
-        parent = cake("blog", next_slice="https://trello.test/c/feed")
+        parent = cake("blog", next_slice="https://trello.com/c/feed")
         candidate = slice_record("feed", parent)
         source = snapshot([parent], [candidate])
         source["source_health"] = [
             {
-                "source": "https://trello.test/c/unknown",
+                "source": "https://trello.com/c/unknown",
                 "status": "unavailable",
                 "relevance": "plate_membership",
                 "error": "visible card is in an unconfigured list",
@@ -239,11 +295,11 @@ class TransitionTest(unittest.TestCase):
             preview_transition(source, [{"action": "pull", "cake": parent["url"]}])
 
     def test_confirmation_token_tracks_affected_not_unrelated_state(self) -> None:
-        parent = cake("blog", next_slice="https://trello.test/c/feed")
+        parent = cake("blog", next_slice="https://trello.com/c/feed")
         candidate = slice_record("feed", parent)
         source = snapshot([parent], [candidate])
         source["priority"] = "Publish useful work"
-        source["pantry"] = [{"id": "maybe", "url": "https://trello.test/c/maybe", "name": "Maybe"}]
+        source["pantry"] = [{"id": "maybe", "url": "https://trello.com/c/maybe", "name": "Maybe"}]
         operation = [{"action": "pull", "cake": parent["url"]}]
         original = preview_transition(source, operation)["confirmation_token"]
 

@@ -10,12 +10,17 @@ from cake_core.slicing import CakeSlicer
 def parent():
     return {
         "id": "cake",
-        "url": "https://trello.test/c/cake",
+        "url": "https://trello.com/c/cake",
         "name": "handwritten.blog",
         "state": "on_stand",
         "direction": "Help readers discover writing",
         "finished_when": None,
-        "raw": {"id": "cake", "name": "handwritten.blog", "desc": "unchanged"},
+        "raw": {
+            "id": "cake",
+            "shortLink": "cake",
+            "name": "handwritten.blog",
+            "desc": "unchanged",
+        },
     }
 
 
@@ -57,8 +62,7 @@ class SlicingTest(unittest.TestCase):
         )
         self.assertEqual(result["status"], "preview")
         self.assertEqual(result["write"]["action"], "create_archived_plate_card")
-        self.assertIn("Cake: cake", result["write"]["body"])
-        self.assertNotIn(cake["url"], result["write"]["body"])
+        self.assertIn("Cake: https://trello.com/c/cake", result["write"]["body"])
         self.assertEqual(result["delivery_writes"], [])
         portfolio.trello.create_card.assert_not_called()
 
@@ -81,9 +85,10 @@ class SlicingTest(unittest.TestCase):
         portfolio = portfolio_for(cake)
         created = {
             "id": "slice",
-            "url": "https://trello.test/c/slice",
+            "url": "https://trello.com/c/slice",
+            "shortLink": "slice",
             "name": "Piano: First scale",
-            "desc": format_slice_contract(cake["id"], "Play one scale", "It is recorded"),
+            "desc": format_slice_contract(cake["url"], "Play one scale", "It is recorded"),
             "closed": False,
         }
         archived = {**created, "closed": True}
@@ -110,10 +115,11 @@ class SlicingTest(unittest.TestCase):
         portfolio.github.issue.return_value = issue(issue_url)
         created = {
             "id": "slice",
-            "url": "https://trello.test/c/slice",
+            "url": "https://trello.com/c/slice",
+            "shortLink": "slice",
             "name": "Discovery feed",
             "desc": format_slice_contract(
-                cake["id"],
+                cake["url"],
                 "Readers can discover posts",
                 "The feed lists every published post",
                 github_issue=issue_url,
@@ -135,7 +141,7 @@ class SlicingTest(unittest.TestCase):
             cake["url"], **values, confirmation_token=preview["confirmation_token"]
         )
         body = portfolio.github.update_issue.call_args.kwargs["body"]
-        self.assertIn("Cake Slice: https://trello.test/c/slice", body)
+        self.assertIn("Cake Slice: https://trello.com/c/slice", body)
 
     def test_updating_current_plate_slice_preserves_membership_and_link(self) -> None:
         cake = parent()
@@ -144,12 +150,13 @@ class SlicingTest(unittest.TestCase):
         portfolio.github.issue.return_value = issue(issue_url)
         card = {
             "id": "slice",
-            "url": "https://trello.test/c/slice",
+            "url": "https://trello.com/c/slice",
+            "shortLink": "slice",
             "idBoard": "plate",
             "idList": "eating",
             "name": "Old title",
             "desc": format_slice_contract(
-                cake["id"], "Old outcome", "Old success", github_issue=issue_url
+                cake["url"], "Old outcome", "Old success", github_issue=issue_url
             ),
             "closed": False,
             "pos": 1,
@@ -175,7 +182,7 @@ class SlicingTest(unittest.TestCase):
         self.assertIn("Disposition: Current", kwargs["description"])
         self.assertIn(f"GitHub issue: {issue_url}", kwargs["description"])
         self.assertIn(
-            "Cake Slice: https://trello.test/c/slice",
+            "Cake Slice: https://trello.com/c/slice",
             portfolio.github.update_issue.call_args.kwargs["body"],
         )
 
