@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import Mock
 
 from cake_core.domain import CakeError, format_slice_contract
+from cake_core.providers import _duplicate_score
 from cake_core.slicing import CakeSlicer
 
 
@@ -24,10 +25,32 @@ def portfolio_for(cake):
     portfolio = Mock()
     portfolio.snapshot.return_value = {"anything": True}
     portfolio._cake_record.return_value = cake
+    portfolio.github.similar_issues.return_value = []
     return portfolio
 
 
 class SlicingTest(unittest.TestCase):
+    def test_duplicate_score_catches_explain_product_regression(self) -> None:
+        issue = {
+            "name": "Explain the product before the homepage manifesto",
+            "raw": {
+                "body": (
+                    "Add a compact typed introduction above the existing handwritten manifesto. "
+                    "Follow it with a simple three-step explanation and a publish action."
+                )
+            },
+        }
+        score = _duplicate_score(
+            "handwritten.blog: Put the product explanation live",
+            (
+                "Outcome: Visitors encounter a concise explanation of handwritten.blog and a "
+                "direct path to publishing before the handwritten manifesto.\n"
+                "Success: PR #87 passes verification and both calls to action work in production."
+            ),
+            issue,
+        )
+        self.assertGreater(score, 0)
+
     def test_github_create_previews_without_writing(self) -> None:
         cake = parent()
         portfolio = portfolio_for(cake)
@@ -41,6 +64,37 @@ class SlicingTest(unittest.TestCase):
         self.assertEqual(result["status"], "preview")
         self.assertEqual(result["write"]["labels"], ["cake-slice"])
         self.assertIn(f"Cake: {cake['url']}", result["write"]["body"])
+        portfolio.github.similar_issues.assert_called_once_with(
+            "example/blog",
+            title="handwritten.blog: Discovery feed",
+            body=result["write"]["body"],
+        )
+        portfolio.github.create_issue.assert_not_called()
+
+    def test_github_create_rejects_a_likely_existing_issue(self) -> None:
+        cake = parent()
+        portfolio = portfolio_for(cake)
+        portfolio.github.similar_issues.return_value = [
+            {
+                "url": "https://github.com/example/blog/issues/76",
+                "title": "Explain the product before the homepage manifesto",
+                "state": "open",
+                "score": 0.61,
+            }
+        ]
+        slicer = CakeSlicer(portfolio)
+
+        with self.assertRaisesRegex(CakeError, r"issues/76.*update/adopt"):
+            slicer.create(
+                cake["url"],
+                title="handwritten.blog: Put the product explanation live",
+                outcome=(
+                    "Visitors encounter a concise explanation of handwritten.blog and a direct "
+                    "path to publishing before the handwritten manifesto."
+                ),
+                success="PR #87 passes verification and both calls to action work in production.",
+            )
+
         portfolio.github.create_issue.assert_not_called()
 
     def test_stale_create_token_does_not_write(self) -> None:
