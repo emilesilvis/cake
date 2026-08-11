@@ -7,9 +7,9 @@ from cake_core.domain import (
     CakeError,
     format_cake_contract,
     format_slice_contract,
+    is_github_issue_url,
     parse_cake_contract,
     parse_slice_contract,
-    parse_slice_source,
     preview_transition,
     validate_snapshot,
 )
@@ -23,7 +23,6 @@ def cake(reference: str, *, next_slice: str | None = None) -> dict:
         "state": "on_stand",
         "direction": "Make useful progress",
         "finished_when": None,
-        "slice_source": "plate",
         "next_slice": next_slice,
     }
 
@@ -37,6 +36,7 @@ def slice_record(reference: str, parent: dict, disposition: str = "candidate") -
         "outcome": "One result exists",
         "success": "The result is observable",
         "not_included": None,
+        "github_issue": None,
         "disposition": disposition,
         "adapter": "plate",
         "canonical_state": "archived",
@@ -69,14 +69,13 @@ def current(record: dict, parent: dict, lane: str = "eating") -> dict:
 class ContractTest(unittest.TestCase):
     def test_contracts_round_trip(self) -> None:
         cake_body = format_cake_contract(
-            "Publish consistently", "plate", "https://trello.test/c/slice", "Habit is stable"
+            "Publish consistently", "https://trello.test/c/slice", "Habit is stable"
         )
         self.assertEqual(
             parse_cake_contract(cake_body),
             {
                 "direction": "Publish consistently",
                 "finished_when": "Habit is stable",
-                "slice_source": "plate",
                 "next_slice": "https://trello.test/c/slice",
             },
         )
@@ -85,17 +84,20 @@ class ContractTest(unittest.TestCase):
         )
         self.assertEqual(parse_slice_contract(slice_body)["not_included"], "Ranking")
 
-    def test_github_source_must_define_a_collection(self) -> None:
-        with self.assertRaisesRegex(CakeError, "needs a query"):
-            parse_slice_source("github:owner/repository")
-        self.assertEqual(
-            parse_slice_source("github:owner/repository?query=label%3Acake-slice"),
-            {
-                "adapter": "github",
-                "repository": "owner/repository",
-                "query": "label:cake-slice",
-            },
+    def test_optional_github_issue_round_trips_as_a_delivery_link(self) -> None:
+        issue = "https://github.com/example/blog/issues/7"
+        body = format_slice_contract(
+            "cake",
+            "Discovery feed is usable",
+            "A reader can discover posts",
+            github_issue=issue,
         )
+        self.assertEqual(parse_slice_contract(body)["github_issue"], issue)
+        self.assertTrue(is_github_issue_url(issue))
+
+    def test_delivery_link_must_be_a_github_issue_url(self) -> None:
+        with self.assertRaisesRegex(CakeError, "GitHub issue URL"):
+            format_slice_contract("cake", "Outcome", "Success", github_issue="https://github.com/example/blog")
 
     def test_abandon_requires_a_reason(self) -> None:
         with self.assertRaisesRegex(CakeError, "needs a reason"):

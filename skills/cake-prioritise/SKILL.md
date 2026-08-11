@@ -12,7 +12,7 @@ Read `../../CONTEXT.md` completely before acting. Choose focus in the context of
 1. Run `python3 scripts/portfolio.py config get`. If Pantry, Cake Stand, or Plate is missing, ask for the new board reference and configure it. Do not migrate old cards as part of this skill.
 2. State the persisted portfolio priority and confirm or replace it every run. A conversational replacement lasts for this run unless the user asks to save it.
 3. Run `snapshot`. Treat Plate and Cake Stand order as advisory claims to challenge. Consider serious Pantry challengers as well as every Cake on the Stand.
-4. Resolve current WIP limits from their provider. Inspect Trello List Limits with available browser access; include configured capacity records and conversational constraints. Blocked Slices remain on Plate and count. If a limit cannot be observed, say so rather than inventing it.
+4. Resolve current WIP limits from their provider. A suffix such as `On the stand /3` or `Eating /2` is an explicit list limit; also inspect Trello List Limits with available browser access and include configured capacity records and conversational constraints. Blocked Slices remain on Plate and count. If a limit cannot be observed, say so rather than inventing it.
 5. Fail closed only when unavailable data is relevant to the decision or transition. Surface external drift; never auto-sync it. If a serious contender has stale or insufficient context, ask instead of rejecting it for poor card maintenance.
 6. Normalize one valid Slice for each serious contender. Read `../cake-slice/SKILL.md` and use its quality gates. If the winner needs a new or reshaped canonical Slice, complete that separately through `cake-slice`, then re-read the portfolio.
 7. Compare the viable shortlist with explicit pairwise trade-offs. Apply hard consequences, viability, portfolio movement, then opportunity cost. Name one winner and what waits. If Cake Stand or Plate exceeds its limit, give the complete keep/park or keep/pause set.
@@ -21,10 +21,11 @@ Read `../../CONTEXT.md` completely before acting. Choose focus in the context of
 
 ## State rules
 
-- Pantry contains possible, still-ill-defined Cakes. Admission to Cake Stand is an explicit commitment with Direction, Slice source, and either a valid Next Slice or a current Slice.
+- Pantry contains possible, still-ill-defined Cakes. Cake Stand contains only Cakes. Admission to Cake Stand is an explicit commitment with Direction and either a valid Next Slice or a current Slice.
 - A Cake with any Plate Slice is **Being Eaten**. A Cake on the Stand without one is **Waiting on the Stand** and must have exactly one valid Next Slice.
 - Only the nominated Next Slice may be pulled. `cake-prioritise` may replace that nomination whenever priorities change. Pulling clears the pointer. To add another current Slice for the same Cake, nominate and pull it in the same plan.
-- Plate is the sole source of truth for current WIP and has only Eating and Blocked. Finish, Pause, or Abandon removes a Slice; Abandon requires a reason.
+- Plate is the sole canonical registry for every Slice and the source of truth for current WIP. Open cards live in Eating or Blocked; non-current Slice cards stay archived on Plate. Finish, Pause, or Abandon archives a Slice; Abandon requires a reason.
+- A Slice may link to a GitHub delivery issue, but Trello remains canonical. If present, the Trello `GitHub issue:` and GitHub `Cake Slice:` links must be reciprocal.
 - When the last current Slice exits, nominate another Slice or Park/Finish the parent Cake in the same plan. A Cake cannot leave the Stand while one of its Slices remains on Plate.
 - Parked and Finished Cakes live alongside the active Cake Stand list but are not active membership. A stable habit may Finish as a Cake and continue as a capacity constraint.
 - Limits strongly discourage overage and require explicit review; they do not mechanically block it.

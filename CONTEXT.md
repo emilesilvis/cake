@@ -9,7 +9,7 @@ A portfolio-level pursuit or direction that can yield one or more Slices. A Cake
 _Avoid_: Project, task, initiative
 
 **Slice**:
-One independently finishable outcome with observable success and exactly one parent Cake.
+One independently finishable outcome with observable success, exactly one parent Cake, and exactly one canonical record on Plate. External work items may be linked to a Slice but never replace it.
 _Avoid_: Task, implementation step, entire Cake
 
 **Pantry**:
@@ -17,16 +17,20 @@ The collection of possible Cakes that have not been admitted to the active portf
 _Avoid_: Backlog, queue
 
 **Cake Stand**:
-The capacity-limited active portfolio of mature Cakes. A Cake belongs here only when it is an explicit commitment with a clear Direction and either current work or a valid Next Slice.
-_Avoid_: Projects board, project list
+The capacity-limited active portfolio of mature Cakes. It contains only Cakes, each admitted as an explicit commitment with a clear Direction and either current work or a valid Next Slice.
+_Avoid_: Projects board, project list, Slice list
 
 **Plate**:
-The capacity-limited set of Slices currently being pursued. Plate is the sole authority for whether a Slice is current work.
+The sole registry for Slices and the authority for whether a Slice is current work. Every Slice has one canonical Plate record; only current Slices consume Plate capacity.
 _Avoid_: Backlog, next queue, task list
 
 **Next Slice**:
-The single validated Slice nominated as a Cake's next pull-ready candidate. It is not a current Slice and leaves this role when pulled onto Plate.
+The single validated Plate Slice referenced by a Cake as its next pull-ready candidate. It is not current and leaves this role when pulled into current Plate work.
 _Avoid_: Current Slice, slice queue
+
+**Delivery Link**:
+An optional reciprocal reference between a Slice and an external work item such as a GitHub issue. Both records link to each other, while the Plate Slice alone owns identity and currentness.
+_Avoid_: Canonical issue, GitHub-backed Slice, Slice source
 
 **Being Eaten**:
 The derived condition of a Cake that has at least one Slice on Plate. It is never stored as an independent status.

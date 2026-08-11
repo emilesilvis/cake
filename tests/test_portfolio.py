@@ -54,14 +54,7 @@ class FakeTrello:
 
 
 class FakeGitHub:
-    def __init__(self, issue):
-        self.value = issue
-
-    def issue(self, reference):
-        return dict(self.value)
-
-    def slices(self, repository, query=""):
-        return [dict(self.value)]
+    pass
 
 
 def card(identifier, board, list_id, name, description, *, closed=False, position=1):
@@ -103,7 +96,7 @@ def config():
 
 
 class PortfolioTest(unittest.TestCase):
-    def test_plate_derives_being_eaten_from_an_external_slice_proxy(self) -> None:
+    def test_plate_derives_being_eaten_from_a_canonical_slice_with_delivery_link(self) -> None:
         trello = FakeTrello()
         cake_url = "https://trello.test/c/blog"
         issue_url = "https://github.com/example/blog/issues/7"
@@ -113,41 +106,31 @@ class PortfolioTest(unittest.TestCase):
                 "stand",
                 "on",
                 "handwritten.blog",
-                format_cake_contract(
-                    "Help readers discover writing",
-                    "github:example/blog?query=label%3Acake-slice",
-                ),
+                format_cake_contract("Help readers discover writing"),
             )
         ]
         trello.board_cards["plate"] = [
             card(
-                "proxy",
+                "feed",
                 "plate",
                 "eating",
                 "handwritten.blog: Discovery feed",
-                f"Cake: {cake_url}\nSlice: {issue_url}",
+                format_slice_contract(
+                    cake_url,
+                    "Readers can discover posts",
+                    "The feed lists published posts",
+                    disposition="current",
+                    github_issue=issue_url,
+                ),
             )
         ]
-        issue = {
-            "id": "example/blog#7",
-            "url": issue_url,
-            "name": "Discovery feed",
-            "adapter": "github",
-            "canonical_state": "open",
-            "cake": cake_url,
-            "outcome": "Readers can discover posts",
-            "success": "The feed lists published posts",
-            "not_included": None,
-            "disposition": "candidate",
-            "reason": None,
-            "raw": {"state": "OPEN"},
-        }
-        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub(issue))
+        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
         result = portfolio.snapshot()
         active_cake = result["cake_stand"]["on_stand"][0]
         self.assertEqual(active_cake["condition"], "being_eaten")
-        self.assertEqual(active_cake["current_slices"], [issue_url])
+        self.assertEqual(active_cake["current_slices"], ["https://trello.test/c/feed"])
         self.assertEqual(result["plate"]["eating"][0]["outcome"], "Readers can discover posts")
+        self.assertEqual(result["plate"]["eating"][0]["github_issue"], issue_url)
         self.assertEqual(result["issues"]["errors"], [])
 
     def test_waiting_cake_derives_waiting_condition(self) -> None:
@@ -160,7 +143,7 @@ class PortfolioTest(unittest.TestCase):
                 "stand",
                 "on",
                 "Learn piano",
-                format_cake_contract("Play freely", "plate", next_slice=slice_url),
+                format_cake_contract("Play freely", next_slice=slice_url),
             )
         ]
         trello.board_cards["plate"] = [
@@ -173,7 +156,7 @@ class PortfolioTest(unittest.TestCase):
                 closed=True,
             )
         ]
-        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub({}))
+        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
         result = portfolio.snapshot()
         self.assertEqual(
             result["cake_stand"]["on_stand"][0]["condition"], "waiting_on_the_stand"
@@ -181,7 +164,7 @@ class PortfolioTest(unittest.TestCase):
         self.assertEqual(result["plate"]["eating"], [])
 
     def test_apply_rejects_stale_confirmation_before_writing(self) -> None:
-        portfolio = CakePortfolio(config=config(), trello=FakeTrello(), github=FakeGitHub({}))
+        portfolio = CakePortfolio(config=config(), trello=FakeTrello(), github=FakeGitHub())
         with patch.object(
             portfolio,
             "preview",
@@ -192,7 +175,7 @@ class PortfolioTest(unittest.TestCase):
         execute.assert_not_called()
 
     def test_apply_requires_explicit_capacity_overage_review(self) -> None:
-        portfolio = CakePortfolio(config=config(), trello=FakeTrello(), github=FakeGitHub({}))
+        portfolio = CakePortfolio(config=config(), trello=FakeTrello(), github=FakeGitHub())
         with patch.object(
             portfolio,
             "preview",

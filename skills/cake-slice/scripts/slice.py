@@ -21,20 +21,13 @@ def emit(value: Any) -> None:
     print(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True))
 
 
-def add_source(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--slice-source",
-        help="Required only when the parent Cake does not store its Slice source yet",
-    )
-
-
 def add_draft(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--title", required=True)
     parser.add_argument("--outcome", required=True)
     parser.add_argument("--success", required=True)
     parser.add_argument("--not-included")
+    parser.add_argument("--github-issue")
     parser.add_argument("--apply-token")
-    add_source(parser)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,7 +40,6 @@ def build_parser() -> argparse.ArgumentParser:
     read_slice = subparsers.add_parser("read-slice")
     read_slice.add_argument("--cake", required=True)
     read_slice.add_argument("--slice", required=True, dest="slice_reference")
-    add_source(read_slice)
 
     create = subparsers.add_parser("create")
     create.add_argument("--cake", required=True)
@@ -67,16 +59,14 @@ def main() -> int:
         if args.command == "read-cake":
             result = slicer.read_cake(args.cake)
         elif args.command == "read-slice":
-            result = slicer.read_slice(
-                args.cake, args.slice_reference, slice_source=args.slice_source
-            )
+            result = slicer.read_slice(args.cake, args.slice_reference)
         else:
             values = {
                 "title": args.title,
                 "outcome": args.outcome,
                 "success": args.success,
                 "not_included": args.not_included,
-                "slice_source": args.slice_source,
+                "github_issue": args.github_issue,
                 "confirmation_token": args.apply_token,
             }
             if args.command == "create":

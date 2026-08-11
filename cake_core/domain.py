@@ -7,11 +7,18 @@ import hashlib
 import json
 import re
 from typing import Any, Iterable
-from urllib import parse
 
 
-CAKE_FIELDS = ("Direction", "Finished when", "Slice source", "Next slice")
-SLICE_FIELDS = ("Cake", "Outcome", "Success", "Not included", "Disposition", "Reason")
+CAKE_FIELDS = ("Direction", "Finished when", "Next slice")
+SLICE_FIELDS = (
+    "Cake",
+    "Outcome",
+    "Success",
+    "Not included",
+    "GitHub issue",
+    "Disposition",
+    "Reason",
+)
 TERMINAL_SLICE_DISPOSITIONS = {"finished", "abandoned"}
 TERMINAL_CANONICAL_STATES = {"finished", "abandoned", "closed"}
 SLICE_DISPOSITIONS = {"candidate", "current", "paused", *TERMINAL_SLICE_DISPOSITIONS}
@@ -71,26 +78,21 @@ def parse_cake_contract(text: str) -> dict[str, str | None]:
     return {
         "direction": fields.get("Direction") or None,
         "finished_when": fields.get("Finished when") or None,
-        "slice_source": fields.get("Slice source") or None,
         "next_slice": fields.get("Next slice") or None,
     }
 
 
 def format_cake_contract(
     direction: str,
-    slice_source: str,
     next_slice: str | None = None,
     finished_when: str | None = None,
 ) -> str:
     if not direction.strip():
         raise CakeError("A mature Cake needs a Direction")
-    if not slice_source.strip():
-        raise CakeError("A mature Cake needs a Slice source")
     return _format_fields(
         (
             ("Direction", direction),
             ("Finished when", finished_when),
-            ("Slice source", slice_source),
             ("Next slice", next_slice),
         )
     )
@@ -104,9 +106,22 @@ def parse_slice_contract(text: str) -> dict[str, str | None]:
         "outcome": fields.get("Outcome") or None,
         "success": fields.get("Success") or None,
         "not_included": fields.get("Not included") or None,
+        "github_issue": fields.get("GitHub issue") or None,
         "disposition": disposition,
         "reason": fields.get("Reason") or None,
     }
+
+
+def is_github_issue_url(value: str | None) -> bool:
+    if not value:
+        return False
+    return bool(
+        re.fullmatch(
+            r"https://github\.com/[^/\s]+/[^/\s]+/issues/\d+/?",
+            value.strip(),
+            flags=re.IGNORECASE,
+        )
+    )
 
 
 def format_slice_contract(
@@ -116,6 +131,7 @@ def format_slice_contract(
     not_included: str | None = None,
     disposition: str = "candidate",
     reason: str | None = None,
+    github_issue: str | None = None,
 ) -> str:
     if not cake.strip():
         raise CakeError("A Slice needs exactly one parent Cake")
@@ -128,56 +144,18 @@ def format_slice_contract(
         raise CakeError(f"Unknown Slice disposition {disposition!r}")
     if normalized_disposition == "abandoned" and not (reason and reason.strip()):
         raise CakeError("An Abandoned Slice needs a reason")
+    if github_issue and not is_github_issue_url(github_issue):
+        raise CakeError("A Slice's GitHub issue must be a GitHub issue URL")
     return _format_fields(
         (
             ("Cake", cake),
             ("Outcome", outcome),
             ("Success", success),
             ("Not included", not_included),
+            ("GitHub issue", github_issue),
             ("Disposition", normalized_disposition.title()),
             ("Reason", reason),
         )
-    )
-
-
-def parse_slice_source(value: str) -> dict[str, Any]:
-    """Parse the small, human-editable Slice source syntax.
-
-    Supported values:
-    - ``plate`` for canonical archived/current cards on the configured Plate board.
-    - ``github:owner/repo?query=...`` with a URL-encoded issue query.
-    - A GitHub repository or issues URL with a ``q`` query parameter.
-    """
-
-    raw = value.strip()
-    if normalize(raw) == "plate":
-        return {"adapter": "plate"}
-    if raw.casefold().startswith("github:"):
-        target = raw.split(":", 1)[1]
-        repo, _, query_string = target.partition("?")
-        values = parse.parse_qs(query_string)
-        query = (values.get("query") or values.get("q") or [""])[0]
-        if len(repo.strip("/").split("/")) != 2:
-            raise CakeError("GitHub Slice source must name owner/repository")
-        if not query.strip():
-            raise CakeError("A GitHub Slice source needs a query that defines its collection")
-        return {"adapter": "github", "repository": repo.strip("/"), "query": query}
-    parsed = parse.urlparse(raw)
-    if parsed.netloc.casefold() == "github.com":
-        parts = [part for part in parsed.path.split("/") if part]
-        if len(parts) < 2:
-            raise CakeError("GitHub Slice source URL must name owner/repository")
-        query_values = parse.parse_qs(parsed.query)
-        query = (query_values.get("q") or query_values.get("query") or [""])[0]
-        if not query.strip():
-            raise CakeError("A GitHub Slice source URL needs a query that defines its collection")
-        return {
-            "adapter": "github",
-            "repository": f"{parts[0]}/{parts[1]}",
-            "query": query,
-        }
-    raise CakeError(
-        "Slice source must be 'plate' or a GitHub repository plus an issue query"
     )
 
 
@@ -217,16 +195,6 @@ def _slice_records(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _current_key(record: dict[str, Any]) -> str | None:
     return canonical_ref(record.get("slice") or record.get("url") or record.get("id"))
-
-
-def _slice_matches_source(cake: dict[str, Any], slice_record: dict[str, Any]) -> bool:
-    source = parse_slice_source(cake.get("slice_source") or "")
-    if source["adapter"] == "plate":
-        return slice_record.get("adapter") == "plate"
-    expected_prefix = f"https://github.com/{source['repository']}/issues/".casefold()
-    return slice_record.get("adapter") == "github" and str(
-        slice_record.get("url", "")
-    ).casefold().startswith(expected_prefix)
 
 
 def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
@@ -280,19 +248,6 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
         next_slice = cake.get("next_slice")
         if not cake.get("direction"):
             errors.append({"code": "missing_direction", "cake": cake.get("url") or cake.get("id")})
-        if not cake.get("slice_source"):
-            errors.append({"code": "missing_slice_source", "cake": cake.get("url") or cake.get("id")})
-        else:
-            try:
-                parse_slice_source(cake["slice_source"])
-            except CakeError as exc:
-                errors.append(
-                    {
-                        "code": "invalid_slice_source",
-                        "cake": cake.get("url") or cake.get("id"),
-                        "error": str(exc),
-                    }
-                )
         if not current and not next_slice:
             errors.append({"code": "waiting_without_next_slice", "cake": cake.get("url") or cake.get("id")})
         if not current and next_slice:
@@ -300,18 +255,15 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
             valid_next = len(matching_next) == 1
             if valid_next:
                 candidate = matching_next[0]
-                try:
-                    valid_next = (
-                        bool(candidate.get("cake"))
-                        and _record_matches(cake, candidate["cake"])
-                        and bool(candidate.get("outcome"))
-                        and bool(candidate.get("success"))
-                        and normalize(candidate.get("disposition", "candidate"))
-                        not in TERMINAL_SLICE_DISPOSITIONS
-                        and _slice_matches_source(cake, candidate)
-                    )
-                except CakeError:
-                    valid_next = False
+                valid_next = (
+                    candidate.get("adapter") == "plate"
+                    and bool(candidate.get("cake"))
+                    and _record_matches(cake, candidate["cake"])
+                    and bool(candidate.get("outcome"))
+                    and bool(candidate.get("success"))
+                    and normalize(candidate.get("disposition", "candidate"))
+                    not in TERMINAL_SLICE_DISPOSITIONS
+                )
             if not valid_next:
                 errors.append(
                     {
@@ -326,6 +278,13 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
             errors.append({"code": "next_slice_is_current", "cake": cake.get("url") or cake.get("id")})
 
     for slice_record in catalog:
+        if slice_record.get("adapter") != "plate":
+            errors.append(
+                {
+                    "code": "slice_outside_plate",
+                    "slice": slice_record.get("url") or slice_record.get("id"),
+                }
+            )
         missing = [field for field in ("cake", "outcome", "success") if not slice_record.get(field)]
         if missing:
             errors.append(
@@ -345,19 +304,15 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
                     "cake": slice_record["cake"],
                 }
             )
-        elif parent_matches[0].get("slice_source"):
-            try:
-                matches_source = _slice_matches_source(parent_matches[0], slice_record)
-            except CakeError:
-                matches_source = False
-            if not matches_source:
-                errors.append(
-                    {
-                        "code": "slice_outside_source",
-                        "slice": slice_record.get("url") or slice_record.get("id"),
-                        "cake": slice_record["cake"],
-                    }
-                )
+        github_issue = slice_record.get("github_issue")
+        if github_issue and not is_github_issue_url(github_issue):
+            errors.append(
+                {
+                    "code": "invalid_github_issue",
+                    "slice": slice_record.get("url") or slice_record.get("id"),
+                    "github_issue": github_issue,
+                }
+            )
 
     return {"errors": errors, "warnings": warnings}
 
@@ -387,8 +342,8 @@ def _candidate_for(snapshot: dict[str, Any], cake: dict[str, Any], reference: st
         raise CakeError("The nominated Slice does not belong to this Cake")
     if not candidate.get("outcome") or not candidate.get("success"):
         raise CakeError("The nominated Slice does not satisfy the Slice contract")
-    if not _slice_matches_source(cake, candidate):
-        raise CakeError("The nominated Slice is outside this Cake's configured Slice source")
+    if candidate.get("adapter") != "plate":
+        raise CakeError("Every canonical Slice must be a Plate card")
     if normalize(candidate.get("disposition", "candidate")) in TERMINAL_SLICE_DISPOSITIONS:
         raise CakeError("A Finished or Abandoned Slice cannot be nominated")
     return candidate
@@ -412,7 +367,6 @@ def _validate_operation(operation: dict[str, Any]) -> None:
                 "to",
                 "direction",
                 "finished_when",
-                "slice_source",
                 "next_slice",
             },
             {"action", "cake", "to"},
@@ -482,7 +436,7 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
             "cake": cake.get("url") or cake.get("id"),
             "slice": candidate_ref,
             "lane": lane,
-            "canonical_on_plate": candidate.get("adapter") == "plate",
+            "canonical_on_plate": True,
             "disposition": "current",
         }
         snapshot.setdefault("plate", {}).setdefault(lane, []).append(current)
@@ -544,12 +498,12 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
         current = [item for item in plate if _record_matches(cake, item.get("cake", ""))]
         if source == "on_stand" and target != "on_stand" and current:
             raise CakeError("Resolve every current Slice before moving its Cake off the Cake Stand")
-        for field in ("direction", "finished_when", "slice_source", "next_slice"):
+        for field in ("direction", "finished_when", "next_slice"):
             if field in operation:
                 cake[field] = operation[field] or None
         if target == "on_stand":
-            if not cake.get("direction") or not cake.get("slice_source"):
-                raise CakeError("A Cake needs a Direction and Slice source before promotion")
+            if not cake.get("direction"):
+                raise CakeError("A Cake needs a Direction before promotion")
             if not current and not cake.get("next_slice"):
                 raise CakeError("A Cake needs a valid Next Slice before promotion")
             if cake.get("next_slice"):
@@ -857,7 +811,6 @@ def _transition_source_projection(
                     "state",
                     "direction",
                     "finished_when",
-                    "slice_source",
                     "next_slice",
                     "position",
                 ),
@@ -879,6 +832,7 @@ def _transition_source_projection(
                     "outcome",
                     "success",
                     "not_included",
+                    "github_issue",
                 ),
             )
             for _, record in sorted(selected_plate.items())
@@ -894,6 +848,7 @@ def _transition_source_projection(
                     "outcome",
                     "success",
                     "not_included",
+                    "github_issue",
                     "disposition",
                     "canonical_state",
                     "adapter",
