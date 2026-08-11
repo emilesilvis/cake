@@ -75,6 +75,8 @@ Disposition: Candidate
 
 All state-changing helpers preview exact transitions first and bind approval to the observed source state. WIP limits strongly discourage over-commitment, but an explicitly reviewed overage can proceed.
 
+Before a GitHub Slice is created, Cake checks all repository issues (open and closed, regardless of labels) and fails closed when an existing issue is a likely match. The `cake-slice` workflow also requires a semantic review because lexical matching cannot prove that two differently worded outcomes are distinct.
+
 ## Development
 
 The reusable rules and provider adapters live in `cake_core/`; the two skill scripts are thin command-line interfaces over that shared module.

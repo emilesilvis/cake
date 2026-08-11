@@ -15,6 +15,76 @@ from .domain import CakeError, canonical_ref, normalize, parse_slice_contract
 TRELLO_API_BASE = "https://api.trello.com/1"
 TRELLO_CREDENTIALS_PATH = Path.home() / ".trello" / "credentials"
 
+_DUPLICATE_STOP_WORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "before",
+    "by",
+    "for",
+    "from",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "the",
+    "this",
+    "to",
+    "with",
+}
+
+
+def _duplicate_terms(value: str) -> set[str]:
+    """Return conservative lexical terms for GitHub duplicate detection."""
+
+    result: set[str] = set()
+    for token in re.findall(r"[a-z0-9]+", value.casefold()):
+        if token in _DUPLICATE_STOP_WORDS or len(token) < 3:
+            continue
+        if token.startswith("explan"):
+            token = "explain"
+        elif token.startswith("publish"):
+            token = "publish"
+        elif token.endswith("ing") and len(token) > 6:
+            token = token[:-3]
+        elif token.endswith("ed") and len(token) > 5:
+            token = token[:-2]
+        elif token.endswith("s") and len(token) > 4:
+            token = token[:-1]
+        result.add(token)
+    return result
+
+
+def _duplicate_score(title: str, body: str, issue: dict[str, Any]) -> float:
+    """Score only strong lexical matches; uncertain cases remain human decisions."""
+
+    issue_title = str(issue.get("name", ""))
+    raw = issue.get("raw") if isinstance(issue.get("raw"), dict) else {}
+    issue_body = str(raw.get("body", ""))
+    target_title = _duplicate_terms(title)
+    existing_title = _duplicate_terms(issue_title)
+    target_all = target_title | _duplicate_terms(body)
+    existing_all = existing_title | _duplicate_terms(issue_body)
+    title_shared = target_title & existing_title
+    all_shared = target_all & existing_all
+
+    title_denominator = min(len(target_title), len(existing_title))
+    all_denominator = min(len(target_all), len(existing_all))
+    title_overlap = len(title_shared) / title_denominator if title_denominator else 0.0
+    all_overlap = len(all_shared) / all_denominator if all_denominator else 0.0
+
+    strong_title_match = len(title_shared) >= 2 and title_overlap >= 0.4
+    strong_contract_match = len(all_shared) >= 6 and all_overlap >= 0.35
+    if not ((strong_title_match and len(all_shared) >= 4) or strong_contract_match):
+        return 0.0
+    return round((title_overlap * 0.6) + (all_overlap * 0.4), 3)
+
 
 def _trello_identifier(value: str, kind: str) -> str | None:
     route = {"board": "b", "card": "c"}.get(kind)
@@ -209,14 +279,18 @@ class GitHubAdapter:
             "raw": value,
         }
 
-    def slices(self, repository: str, query: str = "") -> list[dict[str, Any]]:
+    def issues(
+        self, repository: str, *, state: str = "all", query: str = ""
+    ) -> list[dict[str, Any]]:
+        if state not in {"open", "closed", "all"}:
+            raise CakeError(f"Unknown GitHub issue state {state!r}")
         args = [
             "issue",
             "list",
             "--repo",
             repository,
             "--state",
-            "open",
+            state,
             "--limit",
             "1000",
             "--json",
@@ -240,6 +314,26 @@ class GitHubAdapter:
                 }
             )
         return result
+
+    def slices(self, repository: str, query: str = "") -> list[dict[str, Any]]:
+        return self.issues(repository, state="open", query=query)
+
+    def similar_issues(self, repository: str, *, title: str, body: str) -> list[dict[str, Any]]:
+        """Find likely duplicate issues across the repository, regardless of Slice labels."""
+
+        matches = []
+        for issue in self.issues(repository, state="all"):
+            score = _duplicate_score(title, body, issue)
+            if score:
+                matches.append(
+                    {
+                        "url": issue["url"],
+                        "title": issue.get("name", ""),
+                        "state": issue.get("canonical_state"),
+                        "score": score,
+                    }
+                )
+        return sorted(matches, key=lambda match: (-match["score"], match["url"]))
 
     def create_issue(
         self,

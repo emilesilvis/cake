@@ -175,6 +175,19 @@ class CakeSlicer:
             disposition="candidate",
         )
         if source["adapter"] == "github":
+            similar = self.portfolio.github.similar_issues(
+                source["repository"], title=target["title"], body=target["body"]
+            )
+            if similar:
+                matches = "; ".join(
+                    f"{match['url']} ({match['state']}: {match['title']})"
+                    for match in similar[:5]
+                )
+                raise CakeError(
+                    "A GitHub issue may already represent this Slice: "
+                    f"{matches}. Review the existing issue and update/adopt it, or reshape "
+                    "the Slice so the outcomes are genuinely distinct."
+                )
             labels = _write_query_labels(source["query"])
             write = {
                 "action": "create_github_issue",
