@@ -11,9 +11,13 @@ from .domain import (
     CakeError,
     canonical_ref,
     format_cake_contract,
+    format_plate_projection_contract,
     format_slice_contract,
+    github_repository_name,
+    is_github_issue_url,
     normalize,
     parse_cake_contract,
+    parse_plate_projection_contract,
     parse_slice_contract,
     preview_transition,
     token_for,
@@ -28,6 +32,17 @@ def _card_ref(card: dict[str, Any]) -> str:
     if short_link:
         return f"https://trello.com/c/{short_link}"
     return trello_card_url(card.get("url") or card["id"])
+
+
+def _slice_ref(record: dict[str, Any]) -> str:
+    reference = record.get("url") or record.get("id")
+    if record.get("adapter") == "github" and is_github_issue_url(reference):
+        return str(reference).rstrip("/")
+    return _card_ref(record)
+
+
+def _plate_ref(record: dict[str, Any]) -> str:
+    return trello_card_url(record.get("plate_card") or record.get("url") or record["id"])
 
 
 def _compact_card(card: dict[str, Any]) -> dict[str, Any]:
@@ -78,12 +93,33 @@ def _slice_from_trello(card: dict[str, Any], *, lane: str | None = None) -> dict
     }
 
 
+def _projection_from_trello(
+    card: dict[str, Any], *, lane: str | None = None
+) -> dict[str, Any] | None:
+    contract = parse_plate_projection_contract(card.get("desc", ""))
+    if not is_github_issue_url(contract.get("slice")):
+        return None
+    return {
+        "id": card["id"],
+        "url": card.get("url") or card["id"],
+        "name": card.get("name", ""),
+        "adapter": "github",
+        "canonical_state": None,
+        "lane": lane,
+        "plate_card": card.get("url") or card["id"],
+        "projection": True,
+        **contract,
+        "raw": _compact_card(card),
+    }
+
+
 def _record_matches(record: dict[str, Any], reference: str | None) -> bool:
     expected = canonical_ref(reference)
     return expected is not None and expected in {
         canonical_ref(record.get("id")),
         canonical_ref(record.get("url")),
         canonical_ref(record.get("slice")),
+        canonical_ref(record.get("plate_card")),
     }
 
 
@@ -316,11 +352,12 @@ class CakePortfolio:
                     }
                 )
                 continue
-            current = {
+            projection = _projection_from_trello(card, lane=lane)
+            current = projection or {
                 **_slice_from_trello(card, lane=lane),
                 "plate_card": card.get("url") or card["id"],
                 "slice": card.get("url") or card["id"],
-                "canonical_on_plate": True,
+                "projection": False,
                 "disposition": "current",
             }
             snapshot["plate"][lane].append(current)
@@ -333,9 +370,46 @@ class CakePortfolio:
                 catalog_by_ref[key] = slice_record
 
         for card in all_plate_cards:
+            if _projection_from_trello(card):
+                continue
             parsed = _slice_from_trello(card)
             if include_candidates or not card.get("closed"):
                 add_slice(parsed)
+
+        cakes = [
+            *snapshot["pantry"],
+            *snapshot["cake_stand"]["on_stand"],
+            *snapshot["cake_stand"]["parked"],
+            *snapshot["cake_stand"]["finished"],
+            *snapshot["archived_cakes"],
+        ]
+        repository_cakes: dict[str, tuple[str, list[dict[str, Any]]]] = {}
+        for cake in cakes:
+            repository = github_repository_name(cake.get("repository"))
+            if repository:
+                key = repository.casefold()
+                repository_cakes.setdefault(key, (repository, []))[1].append(cake)
+
+        for repository, repository_parents in repository_cakes.values():
+            try:
+                github_slices = self.github.slices(repository)
+            except CakeError as exc:
+                for cake in repository_parents:
+                    snapshot["source_health"].append(
+                        {
+                            "cake": cake.get("url") or cake.get("id"),
+                            "source": f"https://github.com/{repository}/issues",
+                            "status": "unavailable",
+                            "relevance": "slice_registry",
+                            "error": str(exc),
+                        }
+                    )
+                continue
+            for issue in github_slices:
+                if issue.get("cake") and any(
+                    _record_matches(cake, issue["cake"]) for cake in cakes
+                ):
+                    add_slice({**issue, "repository": repository})
 
         snapshot["slice_catalog"] = list(catalog_by_ref.values())
         catalog = snapshot["slice_catalog"]
@@ -345,12 +419,23 @@ class CakePortfolio:
                     (item for item in catalog if _record_matches(item, current.get("slice"))), None
                 )
                 if canonical:
+                    plate_state = {
+                        key: current.get(key)
+                        for key in (
+                            "id",
+                            "url",
+                            "raw",
+                            "lane",
+                            "plate_card",
+                            "slice",
+                            "projection",
+                        )
+                    }
+                    current.clear()
                     current.update(
                         {
                             **canonical,
-                            "lane": current["lane"],
-                            "plate_card": current["plate_card"],
-                            "slice": current["slice"],
+                            **plate_state,
                             "disposition": "current",
                         }
                     )
@@ -360,7 +445,9 @@ class CakePortfolio:
             for current in snapshot["plate"][lane]:
                 parents = [cake for cake in on_stand if _record_matches(cake, current.get("cake"))]
                 if len(parents) == 1:
-                    parents[0]["current_slices"].append(_card_ref(current))
+                    parents[0]["current_slices"].append(
+                        trello_card_url(current["plate_card"])
+                    )
         for cake in on_stand:
             cake["condition"] = (
                 "being_eaten" if cake["current_slices"] else "waiting_on_the_stand"
@@ -401,6 +488,7 @@ class CakePortfolio:
         direction: str,
         pantry_list: str,
         finished_when: str | None = None,
+        repository: str | None = None,
     ) -> dict[str, Any]:
         """Preview one mature Cake card in a named Pantry list."""
 
@@ -437,6 +525,7 @@ class CakePortfolio:
             "body": format_cake_contract(
                 direction.strip(),
                 finished_when=finished_when.strip() if finished_when else None,
+                repository=repository,
             ),
         }
         payload = {"operation": "create_cake", "write": write}
@@ -453,6 +542,7 @@ class CakePortfolio:
         direction: str,
         pantry_list: str,
         finished_when: str | None = None,
+        repository: str | None = None,
         confirmation_token: str | None = None,
     ) -> dict[str, Any]:
         preview = self.preview_create_cake(
@@ -460,6 +550,7 @@ class CakePortfolio:
             direction=direction,
             pantry_list=pantry_list,
             finished_when=finished_when,
+            repository=repository,
         )
         if confirmation_token is None:
             return preview
@@ -553,6 +644,8 @@ class CakePortfolio:
         values = {
             "direction": cake.get("direction"),
             "finished_when": cake.get("finished_when"),
+            "repository": cake.get("repository"),
+            "slice_index": cake.get("slice_index", []),
             "next_slice": cake.get("next_slice"),
             "current_slices": cake.get("current_slices", []),
             **changes,
@@ -562,6 +655,8 @@ class CakePortfolio:
             values.get("next_slice"),
             values.get("finished_when"),
             values.get("current_slices"),
+            values.get("repository"),
+            values.get("slice_index"),
         )
         self.trello.update_card(cake["id"], description=description)
 
@@ -571,7 +666,7 @@ class CakePortfolio:
         if action == "nominate":
             cake = self._cake_record(snapshot, operation["cake"])
             candidate = self._candidate_record(snapshot, operation["slice"])
-            self._update_cake(cake, next_slice=_card_ref(candidate))
+            self._update_cake(cake, next_slice=_slice_ref(candidate))
             return
 
         if action == "pull":
@@ -597,22 +692,31 @@ class CakePortfolio:
                 candidate.get("not_included"),
                 disposition,
                 reason,
-                github_issue=candidate.get("github_issue"),
             )
-            self.trello.update_card(candidate["id"], description=description, closed=True)
+            if candidate.get("adapter") == "github":
+                self.github.update_issue(
+                    _slice_ref(candidate),
+                    title=candidate.get("name", ""),
+                    body=description,
+                )
+                if disposition in {"finished", "abandoned"}:
+                    self.github.close_issue(_slice_ref(candidate))
+                self.trello.update_card(current["id"], closed=True)
+            else:
+                self.trello.update_card(candidate["id"], description=description, closed=True)
 
             remaining = [
                 item
                 for item in (*snapshot["plate"]["eating"], *snapshot["plate"]["blocked"])
                 if item is not current and _record_matches(parent, item.get("cake"))
             ]
-            remaining_refs = [_card_ref(item) for item in remaining]
+            remaining_refs = [_plate_ref(item) for item in remaining]
 
             if operation.get("next_slice"):
                 next_slice = self._candidate_record(snapshot, operation["next_slice"])
                 self._update_cake(
                     parent,
-                    next_slice=_card_ref(next_slice),
+                    next_slice=_slice_ref(next_slice),
                     current_slices=remaining_refs,
                 )
             elif operation.get("cake_state"):
@@ -660,7 +764,7 @@ class CakePortfolio:
                 previous = without[position - 1].get("position", without[position - 1]["raw"].get("pos"))
                 following = without[position].get("position", without[position]["raw"].get("pos"))
                 target_position = (float(previous) + float(following)) / 2
-            target_id = matches[0].get("plate_card") or matches[0]["id"]
+            target_id = matches[0]["id"]
             self.trello.update_card(target_id, position=target_position)
             return
 
@@ -674,21 +778,49 @@ class CakePortfolio:
     ) -> None:
         _, plate_lists = self._trello_role("plate")
         target_list = plate_lists[normalize(lane).replace(" ", "_")]
-        description = format_slice_contract(
-            _card_ref(cake),
-            candidate["outcome"],
-            candidate["success"],
-            candidate.get("not_included"),
-            "current",
-            github_issue=candidate.get("github_issue"),
-        )
-        self.trello.update_card(
-            candidate["id"], description=description, list_id=target_list["id"], closed=False
-        )
+        if candidate.get("adapter") == "github":
+            if candidate.get("canonical_state") == "closed":
+                self.github.reopen_issue(_slice_ref(candidate))
+            projection = self.trello.create_card(
+                target_list["id"],
+                name=candidate.get("name", ""),
+                description=format_plate_projection_contract(
+                    _slice_ref(candidate), _card_ref(cake)
+                ),
+            )
+            plate_reference = _card_ref(projection)
+            description = format_slice_contract(
+                _card_ref(cake),
+                candidate["outcome"],
+                candidate["success"],
+                candidate.get("not_included"),
+                "current",
+                plate=plate_reference,
+            )
+            self.github.update_issue(
+                _slice_ref(candidate),
+                title=candidate.get("name", ""),
+                body=description,
+            )
+        else:
+            description = format_slice_contract(
+                _card_ref(cake),
+                candidate["outcome"],
+                candidate["success"],
+                candidate.get("not_included"),
+                "current",
+            )
+            updated = self.trello.update_card(
+                candidate["id"],
+                description=description,
+                list_id=target_list["id"],
+                closed=False,
+            )
+            plate_reference = _card_ref(updated) if updated.get("url") else _card_ref(candidate)
         self._update_cake(
             cake,
             next_slice=None,
-            current_slices=[*cake.get("current_slices", []), _card_ref(candidate)],
+            current_slices=[*cake.get("current_slices", []), plate_reference],
         )
 
     def _move_cake_card(
@@ -709,6 +841,8 @@ class CakePortfolio:
         values = {
             "direction": operation.get("direction", cake.get("direction")),
             "finished_when": operation.get("finished_when", cake.get("finished_when")),
+            "repository": cake.get("repository"),
+            "slice_index": cake.get("slice_index", []),
             "next_slice": operation.get("next_slice", cake.get("next_slice")),
             "current_slices": cake.get("current_slices", []),
         }
@@ -723,16 +857,18 @@ class CakePortfolio:
                 if _record_matches(cake, item.get("cake"))
             ]
             if current:
-                values["current_slices"] = [_card_ref(item) for item in current]
+                values["current_slices"] = [_plate_ref(item) for item in current]
                 values["next_slice"] = None
             elif operation.get("next_slice"):
                 candidate = self._candidate_record(source, operation["next_slice"])
-                values["next_slice"] = _card_ref(candidate)
+                values["next_slice"] = _slice_ref(candidate)
         changes["description"] = format_cake_contract(
             values["direction"],
             values.get("next_slice"),
             values.get("finished_when"),
             values.get("current_slices"),
+            values.get("repository"),
+            values.get("slice_index"),
         )
         changes["board_id"] = stand_board["id"]
         changes["list_id"] = stand_lists[target]["id"]

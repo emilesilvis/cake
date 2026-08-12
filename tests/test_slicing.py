@@ -15,6 +15,11 @@ def parent():
         "state": "on_stand",
         "direction": "Help readers discover writing",
         "finished_when": None,
+        "repository": None,
+        "slice_index": [],
+        "current_slice_links": [],
+        "current_slices": [],
+        "next_slice": None,
         "raw": {
             "id": "cake",
             "shortLink": "cake",
@@ -29,6 +34,14 @@ def issue(reference: str, body: str = "Issue body") -> dict:
         "id": "example/blog#7",
         "url": reference,
         "name": "Implementation issue",
+        "adapter": "github",
+        "canonical_state": "open",
+        "cake": "https://trello.com/c/cake",
+        "outcome": "Readers can discover posts",
+        "success": "The feed lists every published post",
+        "not_included": None,
+        "plate": None,
+        "disposition": "candidate",
         "raw": {
             "title": "Implementation issue",
             "url": reference,
@@ -50,6 +63,43 @@ def portfolio_for(cake):
 
 
 class SlicingTest(unittest.TestCase):
+    def test_sync_index_lists_every_trello_only_slice_on_the_cake(self) -> None:
+        cake = parent()
+        first = {
+            "id": "one",
+            "url": "https://trello.com/c/one",
+            "name": "Blog: First",
+            "adapter": "plate",
+            "cake": cake["url"],
+            "raw": {"shortLink": "one"},
+        }
+        second = {
+            "id": "two",
+            "url": "https://trello.com/c/two",
+            "name": "Blog: Second",
+            "adapter": "plate",
+            "cake": cake["url"],
+            "raw": {"shortLink": "two"},
+        }
+        portfolio = portfolio_for(cake)
+        portfolio.snapshot.return_value = {"slice_catalog": [second, first]}
+        slicer = CakeSlicer(portfolio)
+
+        preview = slicer.sync_index(cake["url"])
+
+        self.assertEqual(
+            preview["write"]["slice_index"],
+            ["https://trello.com/c/one", "https://trello.com/c/two"],
+        )
+        self.assertIn("Slice index: https://trello.com/c/one", preview["write"]["target_body"])
+        slicer.sync_index(
+            cake["url"], confirmation_token=preview["confirmation_token"]
+        )
+        self.assertEqual(
+            portfolio._update_cake.call_args.kwargs["slice_index"],
+            ["https://trello.com/c/one", "https://trello.com/c/two"],
+        )
+
     def test_adopt_previews_assigning_a_parent_without_changing_membership(self) -> None:
         cake = parent()
         portfolio = portfolio_for(cake)
@@ -76,7 +126,7 @@ class SlicingTest(unittest.TestCase):
         )
 
         self.assertEqual(result["status"], "preview")
-        self.assertEqual(result["write"]["action"], "adopt_parentless_plate_card")
+        self.assertEqual(result["write"]["action"], "adopt_parentless_plate_slice")
         self.assertIn("Cake: https://trello.com/c/cake", result["write"]["body"])
         self.assertIn("Disposition: Current", result["write"]["body"])
         portfolio.trello.update_card.assert_not_called()
@@ -160,9 +210,9 @@ class SlicingTest(unittest.TestCase):
             success="The feed lists every published post",
         )
         self.assertEqual(result["status"], "preview")
-        self.assertEqual(result["write"]["action"], "create_archived_plate_card")
+        self.assertEqual(result["write"]["action"], "create_archived_plate_slice")
         self.assertIn("Cake: https://trello.com/c/cake", result["write"]["body"])
-        self.assertEqual(result["delivery_writes"], [])
+        self.assertIn("<created Trello Slice URL>", result["cake_write"]["target_body"])
         portfolio.trello.create_card.assert_not_called()
 
     def test_stale_create_token_does_not_write(self) -> None:
@@ -207,83 +257,128 @@ class SlicingTest(unittest.TestCase):
         portfolio.trello.update_card.assert_called_once_with("slice", closed=True)
         self.assertNotIn("next_slice", result)
 
-    def test_create_with_github_issue_writes_reciprocal_backlink(self) -> None:
+    def test_repository_backed_create_writes_github_issue_and_cake_index(self) -> None:
         cake = parent()
+        cake["repository"] = "https://github.com/example/blog"
         issue_url = "https://github.com/example/blog/issues/7"
         portfolio = portfolio_for(cake)
-        portfolio.github.issue.return_value = issue(issue_url)
-        created = {
-            "id": "slice",
-            "url": "https://trello.com/c/slice",
-            "shortLink": "slice",
-            "name": "Discovery feed",
-            "desc": format_slice_contract(
-                cake["url"],
-                "Readers can discover posts",
-                "The feed lists every published post",
-                github_issue=issue_url,
-            ),
-            "closed": False,
-        }
-        portfolio.trello.create_card.return_value = created
-        portfolio.trello.update_card.return_value = {**created, "closed": True}
+        portfolio.github.create_issue.return_value = issue(issue_url)
         slicer = CakeSlicer(portfolio)
         values = {
             "title": "Discovery feed",
             "outcome": "Readers can discover posts",
             "success": "The feed lists every published post",
-            "github_issue": issue_url,
         }
         preview = slicer.create(cake["url"], **values)
-        self.assertEqual(preview["delivery_writes"][0]["issue"], issue_url)
-        slicer.create(
+        self.assertEqual(preview["provider"], "github")
+        self.assertEqual(preview["write"]["action"], "create_github_slice_issue")
+
+        result = slicer.create(
             cake["url"], **values, confirmation_token=preview["confirmation_token"]
         )
-        body = portfolio.github.update_issue.call_args.kwargs["body"]
-        self.assertIn("Cake Slice: https://trello.com/c/slice", body)
+        portfolio.github.ensure_label.assert_called_once_with("example/blog", "cake-slice")
+        portfolio.github.create_issue.assert_called_once()
+        portfolio.trello.create_card.assert_not_called()
+        self.assertEqual(result["cake_slice_index"], [issue_url])
+        self.assertEqual(
+            portfolio._update_cake.call_args.kwargs["slice_index"], [issue_url]
+        )
 
-    def test_updating_current_plate_slice_preserves_membership_and_link(self) -> None:
+    def test_updating_current_github_slice_preserves_plate_backlink(self) -> None:
         cake = parent()
+        cake["repository"] = "https://github.com/example/blog"
         issue_url = "https://github.com/example/blog/issues/7"
+        plate_url = "https://trello.com/c/projection"
         portfolio = portfolio_for(cake)
-        portfolio.github.issue.return_value = issue(issue_url)
-        card = {
-            "id": "slice",
-            "url": "https://trello.com/c/slice",
-            "shortLink": "slice",
-            "idBoard": "plate",
-            "idList": "eating",
-            "name": "Old title",
-            "desc": format_slice_contract(
-                cake["url"], "Old outcome", "Old success", github_issue=issue_url
-            ),
-            "closed": False,
-            "pos": 1,
+        current_issue = issue(issue_url)
+        current_issue.update(
+            {
+                "name": "Old title",
+                "outcome": "Old outcome",
+                "success": "Old success",
+                "plate": plate_url,
+                "disposition": "current",
+            }
+        )
+        portfolio._candidate_record.return_value = current_issue
+        portfolio.github.update_issue.return_value = {
+            **current_issue,
+            "name": "New title",
+            "outcome": "New outcome",
+            "success": "New success",
         }
-        portfolio.trello.locate_card.return_value = card
-        portfolio.trello.update_card.return_value = card
         slicer = CakeSlicer(portfolio)
         values = {
             "title": "New title",
             "outcome": "New outcome",
             "success": "New success",
-            "github_issue": issue_url,
         }
-        preview = slicer.update(cake["url"], card["url"], **values)
+        preview = slicer.update(cake["url"], issue_url, **values)
         slicer.update(
             cake["url"],
-            card["url"],
+            issue_url,
             **values,
             confirmation_token=preview["confirmation_token"],
         )
-        kwargs = portfolio.trello.update_card.call_args.kwargs
-        self.assertEqual(set(kwargs), {"name", "description"})
-        self.assertIn("Disposition: Current", kwargs["description"])
-        self.assertIn(f"GitHub issue: {issue_url}", kwargs["description"])
-        self.assertIn(
-            "Cake Slice: https://trello.com/c/slice",
-            portfolio.github.update_issue.call_args.kwargs["body"],
+        body = portfolio.github.update_issue.call_args.kwargs["body"]
+        self.assertIn("Disposition: Current", body)
+        self.assertIn(f"Plate: {plate_url}", body)
+        portfolio.trello.update_card.assert_not_called()
+
+    def test_migration_previews_all_cross_provider_writes_before_applying(self) -> None:
+        cake = parent()
+        cake["next_slice"] = "https://trello.com/c/slice"
+        source = {
+            "id": "slice",
+            "url": "https://trello.com/c/slice",
+            "shortLink": "slice",
+            "name": "Blog: Rewrite five posts",
+            "adapter": "plate",
+            "canonical_state": "archived",
+            "cake": cake["url"],
+            "outcome": "Five posts read naturally",
+            "success": "All five pass the checker",
+            "not_included": None,
+            "disposition": "candidate",
+            "raw": {"shortLink": "slice"},
+        }
+        portfolio = portfolio_for(cake)
+        portfolio.snapshot.return_value = {"slice_catalog": [source]}
+        portfolio._candidate_record.return_value = source
+        portfolio.github.slices.return_value = []
+        slicer = CakeSlicer(portfolio)
+
+        preview = slicer.migrate_to_github(
+            cake["url"], source["url"], repository="example/blog"
         )
+
+        self.assertEqual([write["action"] for write in preview["writes"]], [
+            "create_github_slice_issue",
+            "supersede_trello_slice",
+            "set_cake_slice_registry",
+        ])
+        self.assertIn("<created GitHub Slice URL>", preview["writes"][2]["target_body"])
+        portfolio.github.create_issue.assert_not_called()
+        portfolio.trello.update_card.assert_not_called()
+
+        issue_url = "https://github.com/example/blog/issues/9"
+        portfolio.github.create_issue.return_value = issue(issue_url)
+        result = slicer.migrate_to_github(
+            cake["url"],
+            source["url"],
+            repository="example/blog",
+            confirmation_token=preview["confirmation_token"],
+        )
+
+        migration_body = portfolio.trello.update_card.call_args.kwargs["description"]
+        self.assertIn(f"Slice: {issue_url}", migration_body)
+        self.assertIn("Disposition: Migrated", migration_body)
+        self.assertTrue(portfolio.trello.update_card.call_args.kwargs["closed"])
+        cake_update = portfolio._update_cake.call_args.kwargs
+        self.assertEqual(cake_update["repository"], "https://github.com/example/blog")
+        self.assertEqual(cake_update["slice_index"], [issue_url])
+        self.assertEqual(cake_update["next_slice"], issue_url)
+        self.assertEqual(result["status"], "migrated")
 
 
 if __name__ == "__main__":

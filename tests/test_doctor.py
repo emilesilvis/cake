@@ -18,6 +18,8 @@ def healthy_snapshot() -> dict:
         "state": "on_stand",
         "direction": "Create a useful change",
         "finished_when": None,
+        "repository": None,
+        "slice_index": [slice_url],
         "current_slice_links": [slice_url],
         "next_slice": None,
     }
@@ -29,6 +31,7 @@ def healthy_snapshot() -> dict:
         "outcome": "One result exists",
         "success": "The result is observable",
         "not_included": None,
+        "plate": None,
         "github_issue": None,
         "disposition": "current",
         "adapter": "plate",
@@ -120,25 +123,46 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(plate_wip["status"], "over")
         self.assertIn("cake-prioritise", result["handoffs"])
 
-    def test_delivery_issue_must_link_back_to_its_trello_slice(self) -> None:
+    def test_github_slice_must_link_back_to_its_plate_projection(self) -> None:
         snapshot = healthy_snapshot()
         issue_url = "https://github.com/example/cake/issues/7"
-        snapshot["slice_catalog"][0]["github_issue"] = issue_url
+        projection_url = "https://trello.com/c/slice"
+        parent = snapshot["cake_stand"]["on_stand"][0]
+        parent["repository"] = "https://github.com/example/cake"
+        parent["slice_index"] = [issue_url]
+        canonical = snapshot["slice_catalog"][0]
+        canonical.update(
+            {
+                "id": "example/cake#7",
+                "url": issue_url,
+                "adapter": "github",
+                "plate": None,
+            }
+        )
+        current = snapshot["plate"]["eating"][0]
+        current.update(
+            {
+                **canonical,
+                "id": "slice",
+                "url": projection_url,
+                "slice": issue_url,
+                "plate_card": projection_url,
+                "lane": "eating",
+                "disposition": "current",
+            }
+        )
+        snapshot["issues"] = validate_snapshot(snapshot)
         portfolio = Mock()
         portfolio.snapshot.return_value = snapshot
-        portfolio.github.issue.return_value = {
-            "name": "Delivery issue",
-            "raw": {"body": "No Trello backlink here"},
-        }
 
         result = CakeDoctor(portfolio).check()
 
         finding = next(
             item
             for item in result["findings"]
-            if item["code"] == "github_backlink_drift"
+            if item["code"] == "plate_projection_link_drift"
         )
-        self.assertEqual(finding["handoff"], "cake-slice")
+        self.assertEqual(finding["handoff"], "cake-prioritise")
 
 
 if __name__ == "__main__":

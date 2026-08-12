@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from cake_core.domain import CakeError, format_cake_contract, format_slice_contract
+from cake_core.domain import (
+    CakeError,
+    format_cake_contract,
+    format_plate_projection_contract,
+    format_slice_contract,
+)
 from cake_core.portfolio import CakePortfolio
 from cake_core.providers import TrelloAdapter
 
@@ -61,14 +66,15 @@ class FakeTrello:
         self.writes.append(
             (("create_card", list_id), {"name": name, "description": description})
         )
+        is_plate = list_id in {"eating", "blocked"}
         created = card(
-            "created-cake",
-            "pantry",
+            "created-slice" if is_plate else "created-cake",
+            "plate" if is_plate else "pantry",
             list_id,
             name,
             description,
         )
-        self.board_cards["pantry"].append(created)
+        self.board_cards["plate" if is_plate else "pantry"].append(created)
         return created
 
 
@@ -253,10 +259,11 @@ class PortfolioTest(unittest.TestCase):
         self.assertEqual(result["unexpected_records"], [])
         self.assertEqual(result["source_health"], [])
 
-    def test_plate_derives_being_eaten_from_a_canonical_slice_with_delivery_link(self) -> None:
+    def test_snapshot_joins_github_slice_to_its_plate_projection(self) -> None:
         trello = FakeTrello()
         cake_url = "https://trello.com/c/blog"
         issue_url = "https://github.com/example/blog/issues/7"
+        projection_url = "https://trello.com/c/feed"
         trello.board_cards["stand"] = [
             card(
                 "blog",
@@ -265,7 +272,9 @@ class PortfolioTest(unittest.TestCase):
                 "handwritten.blog",
                 format_cake_contract(
                     "Help readers discover writing",
-                    current_slices=["https://trello.com/c/feed"],
+                    current_slices=[projection_url],
+                    repository="example/blog",
+                    slice_index=[issue_url],
                 ),
             )
         ]
@@ -275,26 +284,40 @@ class PortfolioTest(unittest.TestCase):
                 "plate",
                 "eating",
                 "handwritten.blog: Discovery feed",
-                format_slice_contract(
-                    cake_url,
-                    "Readers can discover posts",
-                    "The feed lists published posts",
-                    disposition="current",
-                    github_issue=issue_url,
-                ),
+                format_plate_projection_contract(issue_url, cake_url),
             )
         ]
-        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
+        github = Mock()
+        github.slices.return_value = [
+            {
+                "id": "example/blog#7",
+                "url": issue_url,
+                "name": "handwritten.blog: Discovery feed",
+                "adapter": "github",
+                "canonical_state": "open",
+                "cake": cake_url,
+                "outcome": "Readers can discover posts",
+                "success": "The feed lists published posts",
+                "not_included": None,
+                "plate": projection_url,
+                "github_issue": None,
+                "disposition": "current",
+                "reason": None,
+                "raw": {},
+            }
+        ]
+        portfolio = CakePortfolio(config=config(), trello=trello, github=github)
         result = portfolio.snapshot()
         active_cake = result["cake_stand"]["on_stand"][0]
         self.assertEqual(active_cake["condition"], "being_eaten")
-        self.assertEqual(active_cake["current_slices"], ["https://trello.com/c/feed"])
-        self.assertEqual(
-            active_cake["current_slice_links"], ["https://trello.com/c/feed"]
-        )
+        self.assertEqual(active_cake["current_slices"], [projection_url])
+        self.assertEqual(active_cake["current_slice_links"], [projection_url])
         self.assertEqual(result["plate"]["eating"][0]["outcome"], "Readers can discover posts")
-        self.assertEqual(result["plate"]["eating"][0]["github_issue"], issue_url)
+        self.assertEqual(result["plate"]["eating"][0]["slice"], issue_url)
+        self.assertEqual([item["url"] for item in result["slice_catalog"]], [issue_url])
         self.assertEqual(result["issues"]["errors"], [])
+        self.assertEqual(result["issues"]["warnings"], [])
+        github.slices.assert_called_once_with("example/blog")
 
     def test_waiting_cake_derives_waiting_condition(self) -> None:
         trello = FakeTrello()
@@ -359,6 +382,58 @@ class PortfolioTest(unittest.TestCase):
         cake_write = trello.writes[1][1]
         self.assertIn("Cake: https://trello.com/c/blog", slice_write["description"])
         self.assertIn("Current slices: https://trello.com/c/feed", cake_write["description"])
+        self.assertNotIn("Next slice:", cake_write["description"])
+
+    def test_pull_of_github_slice_creates_cross_linked_plate_projection(self) -> None:
+        trello = FakeTrello()
+        cake_url = "https://trello.com/c/blog"
+        issue_url = "https://github.com/example/blog/issues/7"
+        trello.board_cards["stand"] = [
+            card(
+                "blog",
+                "stand",
+                "on",
+                "emilesilvis.com",
+                format_cake_contract(
+                    "Publish clear personal essays",
+                    next_slice=issue_url,
+                    repository="example/blog",
+                    slice_index=[issue_url],
+                ),
+            )
+        ]
+        github = Mock()
+        github.slices.return_value = [
+            {
+                "id": "example/blog#7",
+                "url": issue_url,
+                "name": "emilesilvis.com: Rewrite five posts",
+                "adapter": "github",
+                "canonical_state": "open",
+                "cake": cake_url,
+                "outcome": "Five posts read naturally",
+                "success": "All five pass the checker",
+                "not_included": None,
+                "plate": None,
+                "github_issue": None,
+                "disposition": "candidate",
+                "reason": None,
+                "raw": {},
+            }
+        ]
+        portfolio = CakePortfolio(config=config(), trello=trello, github=github)
+
+        portfolio._execute({"action": "pull", "cake": cake_url, "lane": "eating"})
+
+        projection_write = trello.writes[0][1]
+        cake_write = trello.writes[1][1]
+        self.assertIn(f"Slice: {issue_url}", projection_write["description"])
+        issue_body = github.update_issue.call_args.kwargs["body"]
+        self.assertIn("Plate: https://trello.com/c/created-slice", issue_body)
+        self.assertIn(
+            "Current slices: https://trello.com/c/created-slice",
+            cake_write["description"],
+        )
         self.assertNotIn("Next slice:", cake_write["description"])
 
     def test_promoting_a_pantry_cake_links_its_already_current_slice(self) -> None:

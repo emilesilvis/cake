@@ -127,6 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     create_cake.add_argument("--direction", required=True)
     create_cake.add_argument("--pantry-list", required=True)
     create_cake.add_argument("--finished-when")
+    create_cake.add_argument("--repository")
     create_cake.add_argument("--apply-token")
 
     preview = subparsers.add_parser("preview")
@@ -156,6 +157,7 @@ def main() -> int:
                     direction=args.direction,
                     pantry_list=args.pantry_list,
                     finished_when=args.finished_when,
+                    repository=args.repository,
                     confirmation_token=args.apply_token,
                 )
             else:

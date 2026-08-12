@@ -6,15 +6,11 @@ import re
 from typing import Any
 
 from .domain import (
-    CakeError,
     canonical_ref,
-    is_github_issue_url,
-    trello_card_url,
 )
 from .portfolio import CakePortfolio
 
 _LIMIT_SUFFIX = re.compile(r"(?:^|\s)/\s*(\d+)\s*$")
-_GITHUB_BACKLINK = re.compile(r"^Cake Slice:\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 def _cake_records(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
@@ -64,9 +60,13 @@ def _handoff_for(code: str) -> str | None:
     if code in {
         "invalid_slice_contract",
         "invalid_slice_cake_link",
-        "invalid_github_issue",
-        "slice_outside_plate",
-        "github_backlink_drift",
+        "invalid_github_slice_url",
+        "invalid_trello_slice_url",
+        "invalid_cake_repository",
+        "invalid_slice_index_links",
+        "slice_index_drift",
+        "slice_registry_mismatch",
+        "legacy_delivery_link",
     }:
         return "cake-slice"
     if code in {
@@ -86,6 +86,12 @@ def _handoff_for(code: str) -> str | None:
         "invalid_slice_parent",
         "wip_overage",
         "invalid_capacity_contract",
+        "invalid_plate_projection",
+        "projection_missing_canonical_slice",
+        "plate_projection_link_drift",
+        "trello_slice_projection_drift",
+        "invalid_plate_projection_link",
+        "stale_plate_projection_link",
     }:
         return "cake-prioritise"
     return None
@@ -121,11 +127,22 @@ def _finding_for_issue(
             f"{cake_name} has both current work and a Next Slice; those roles are exclusive."
         ),
         "next_slice_is_current": f"{cake_name} names a Slice as Next while it is already current.",
-        "slice_outside_plate": f"{slice_name} is not represented by a canonical Plate card.",
         "invalid_slice_contract": f"{slice_name} is missing part of its Cake, Outcome, or Success contract.",
         "invalid_slice_cake_link": f"{slice_name} does not use a clickable Trello link for its parent Cake.",
         "invalid_slice_parent": f"{slice_name} points to a parent Cake that cannot be resolved.",
-        "invalid_github_issue": f"{slice_name} has an invalid GitHub delivery link.",
+        "invalid_github_slice_url": f"{slice_name} is not a valid GitHub issue Slice.",
+        "invalid_trello_slice_url": f"{slice_name} is not a valid Trello Slice card.",
+        "invalid_cake_repository": f"{cake_name} does not name a valid GitHub repository.",
+        "invalid_slice_index_links": f"{cake_name} contains an invalid link in its Slice index.",
+        "slice_index_drift": f"{cake_name}'s Slice index does not list exactly its canonical Slices.",
+        "slice_registry_mismatch": f"{slice_name} is stored outside {cake_name}'s chosen Slice registry.",
+        "legacy_delivery_link": f"{slice_name} still uses the retired Trello-to-GitHub delivery-link model.",
+        "invalid_plate_projection": f"{slice_name} has no valid Plate card.",
+        "projection_missing_canonical_slice": f"{slice_name}'s Plate card cannot resolve its canonical Slice.",
+        "plate_projection_link_drift": f"{slice_name} and its Plate card do not link to each other.",
+        "trello_slice_projection_drift": f"{slice_name}'s Plate entry is not its canonical Trello card.",
+        "invalid_plate_projection_link": f"{slice_name} has an invalid Plate backlink.",
+        "stale_plate_projection_link": f"{slice_name} links to Plate even though it is not current.",
     }
     result: dict[str, Any] = {
         "severity": severity,
@@ -246,62 +263,7 @@ class CakeDoctor:
             )
         return findings
 
-    def _delivery_findings(self, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
-        findings: list[dict[str, Any]] = []
-        for slice_record in _slice_records(snapshot):
-            github_issue = slice_record.get("github_issue")
-            if not github_issue or not is_github_issue_url(github_issue):
-                continue
-            slice_subject = _subject(
-                snapshot, slice_record.get("url") or slice_record.get("id")
-            )
-            try:
-                issue = self.portfolio.github.issue(github_issue)
-            except CakeError as exc:
-                findings.append(
-                    {
-                        "severity": "warning",
-                        "code": "github_unavailable",
-                        "message": (
-                            f"Could not verify the GitHub link for {_display(slice_subject, 'a Slice')}: {exc}"
-                        ),
-                        "subjects": [slice_subject] if slice_subject else [],
-                        "handoff": None,
-                    }
-                )
-                continue
-            body = str(issue.get("raw", {}).get("body") or "")
-            backlinks = _GITHUB_BACKLINK.findall(body)
-            try:
-                expected = trello_card_url(
-                    slice_record.get("url") or slice_record.get("id")
-                )
-            except (CakeError, TypeError):
-                continue
-            if len(backlinks) == 1 and canonical_ref(backlinks[0]) == canonical_ref(
-                expected
-            ):
-                continue
-            findings.append(
-                {
-                    "severity": "error",
-                    "code": "github_backlink_drift",
-                    "message": (
-                        f"The GitHub issue linked from {_display(slice_subject, 'a Slice')} does not link back to it."
-                    ),
-                    "subjects": [
-                        *([slice_subject] if slice_subject else []),
-                        {
-                            "name": issue.get("name") or github_issue,
-                            "url": github_issue,
-                        },
-                    ],
-                    "handoff": "cake-slice",
-                }
-            )
-        return findings
-
-    def check(self, *, check_delivery_links: bool = True) -> dict[str, Any]:
+    def check(self) -> dict[str, Any]:
         snapshot = self.portfolio.snapshot()
         issues = snapshot.get("issues", {})
         findings = [
@@ -340,9 +302,6 @@ class CakeDoctor:
         wip, wip_findings = self._wip(snapshot)
         findings.extend(wip_findings)
         findings.extend(self._capacity_findings(snapshot))
-        if check_delivery_links:
-            findings.extend(self._delivery_findings(snapshot))
-
         current_slices = [
             *snapshot.get("plate", {}).get("eating", []),
             *snapshot.get("plate", {}).get("blocked", []),
