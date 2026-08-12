@@ -526,6 +526,7 @@ class CakePortfolio:
                 direction.strip(),
                 finished_when=finished_when.strip() if finished_when else None,
                 repository=repository,
+                trello_markdown=True,
             ),
         }
         payload = {"operation": "create_cake", "write": write}
@@ -657,6 +658,7 @@ class CakePortfolio:
             values.get("current_slices"),
             values.get("repository"),
             values.get("slice_index"),
+            trello_markdown=True,
         )
         self.trello.update_card(cake["id"], description=description)
 
@@ -692,6 +694,7 @@ class CakePortfolio:
                 candidate.get("not_included"),
                 disposition,
                 reason,
+                trello_markdown=candidate.get("adapter") != "github",
             )
             if candidate.get("adapter") == "github":
                 self.github.update_issue(
@@ -785,7 +788,7 @@ class CakePortfolio:
                 target_list["id"],
                 name=candidate.get("name", ""),
                 description=format_plate_projection_contract(
-                    _slice_ref(candidate), _card_ref(cake)
+                    _slice_ref(candidate), _card_ref(cake), trello_markdown=True
                 ),
             )
             plate_reference = _card_ref(projection)
@@ -809,6 +812,7 @@ class CakePortfolio:
                 candidate["success"],
                 candidate.get("not_included"),
                 "current",
+                trello_markdown=True,
             )
             updated = self.trello.update_card(
                 candidate["id"],
@@ -869,6 +873,7 @@ class CakePortfolio:
             values.get("current_slices"),
             values.get("repository"),
             values.get("slice_index"),
+            trello_markdown=True,
         )
         changes["board_id"] = stand_board["id"]
         changes["list_id"] = stand_lists[target]["id"]

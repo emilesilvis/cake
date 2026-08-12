@@ -36,6 +36,10 @@ TERMINAL_CANONICAL_STATES = {"finished", "abandoned", "closed"}
 SLICE_DISPOSITIONS = {"candidate", "current", "paused", *TERMINAL_SLICE_DISPOSITIONS}
 CAKE_STATES = {"pantry", "on_stand", "parked", "finished"}
 
+_CONTRACT_FIELD_LINE = re.compile(
+    r"^(?:\*\*(?P<markdown>[^:\n*]+):\*\*|(?P<plain>[^:\n]+):)\s*(?P<value>.*)$"
+)
+
 
 class CakeError(RuntimeError):
     """A violated Cake contract or unsafe requested operation."""
@@ -111,18 +115,27 @@ def token_for(payload: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:20]
 
 
+def parse_contract_field_line(line: str) -> tuple[str, str] | None:
+    """Read a plain or Trello Markdown contract field line."""
+
+    match = _CONTRACT_FIELD_LINE.match(line)
+    if not match:
+        return None
+    return (match.group("markdown") or match.group("plain"), match.group("value"))
+
+
 def _parse_fields(text: str, allowed: Iterable[str]) -> dict[str, str]:
     allowed_by_normalized = {normalize(field): field for field in allowed}
     result: dict[str, str] = {}
     current: str | None = None
     for raw_line in text.splitlines():
-        match = re.match(r"^([^:\n]+):\s*(.*)$", raw_line)
-        normalized = normalize(match.group(1)) if match else ""
-        if match and normalized in allowed_by_normalized:
+        parsed = parse_contract_field_line(raw_line)
+        normalized = normalize(parsed[0]) if parsed else ""
+        if parsed and normalized in allowed_by_normalized:
             current = allowed_by_normalized[normalized]
-            result[current] = match.group(2).strip()
+            result[current] = parsed[1].strip()
             continue
-        if match:
+        if parsed:
             if current and raw_line.lstrip().startswith("- "):
                 result[current] = f"{result[current]}\n{raw_line.rstrip()}".strip()
                 continue
@@ -133,9 +146,16 @@ def _parse_fields(text: str, allowed: Iterable[str]) -> dict[str, str]:
     return result
 
 
-def _format_fields(values: Iterable[tuple[str, str | None]]) -> str:
-    lines = [f"{field}: {value.strip()}" for field, value in values if value and value.strip()]
-    return "\n".join(lines)
+def _format_fields(
+    values: Iterable[tuple[str, str | None]], *, trello_markdown: bool = False
+) -> str:
+    fields = [
+        f"{'**' if trello_markdown else ''}{field}:{'**' if trello_markdown else ''} "
+        f"{value.strip()}"
+        for field, value in values
+        if value and value.strip()
+    ]
+    return ("\n\n" if trello_markdown else "\n").join(fields)
 
 
 def _parse_reference_list(value: str | None) -> list[str]:
@@ -190,6 +210,8 @@ def format_cake_contract(
     current_slices: Iterable[str] | None = None,
     repository: str | None = None,
     slice_index: Iterable[str] | None = None,
+    *,
+    trello_markdown: bool = False,
 ) -> str:
     if not direction.strip():
         raise CakeError("A mature Cake needs a Direction")
@@ -207,7 +229,8 @@ def format_cake_contract(
             ("Slice index", canonical_index),
             ("Current slices", current_slice_links),
             ("Next slice", canonical_next),
-        )
+        ),
+        trello_markdown=trello_markdown,
     )
 
 
@@ -247,6 +270,8 @@ def format_slice_contract(
     reason: str | None = None,
     plate: str | None = None,
     github_issue: str | None = None,
+    *,
+    trello_markdown: bool = False,
 ) -> str:
     canonical_cake = trello_card_url(cake)
     if not outcome.strip():
@@ -272,7 +297,8 @@ def format_slice_contract(
             ("GitHub issue", github_issue),
             ("Disposition", normalized_disposition.title()),
             ("Reason", reason),
-        )
+        ),
+        trello_markdown=trello_markdown,
     )
 
 
@@ -286,7 +312,11 @@ def parse_plate_projection_contract(text: str) -> dict[str, str | None]:
 
 
 def format_plate_projection_contract(
-    slice_reference: str, cake: str, *, disposition: str = "current"
+    slice_reference: str,
+    cake: str,
+    *,
+    disposition: str = "current",
+    trello_markdown: bool = False,
 ) -> str:
     if not is_github_issue_url(slice_reference):
         raise CakeError("A Plate projection must point to a GitHub issue Slice")
@@ -298,7 +328,8 @@ def format_plate_projection_contract(
             ("Slice", _canonical_slice_url(slice_reference)),
             ("Cake", trello_card_url(cake)),
             ("Disposition", normalized_disposition.title()),
-        )
+        ),
+        trello_markdown=trello_markdown,
     )
 
 

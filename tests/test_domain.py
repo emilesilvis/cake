@@ -117,6 +117,65 @@ class ContractTest(unittest.TestCase):
         )
         self.assertEqual(parse_slice_contract(slice_body)["not_included"], "Ranking")
 
+    def test_trello_markdown_contracts_render_cleanly_and_round_trip(self) -> None:
+        body = format_slice_contract(
+            "https://trello.com/c/cake",
+            "Discovery feed is usable",
+            "A reader can discover posts",
+            "Ranking",
+            disposition="current",
+            trello_markdown=True,
+        )
+
+        self.assertEqual(
+            body,
+            "**Cake:** https://trello.com/c/cake\n\n"
+            "**Outcome:** Discovery feed is usable\n\n"
+            "**Success:** A reader can discover posts\n\n"
+            "**Not included:** Ranking\n\n"
+            "**Disposition:** Current",
+        )
+        self.assertEqual(
+            parse_slice_contract(body),
+            {
+                "cake": "https://trello.com/c/cake",
+                "outcome": "Discovery feed is usable",
+                "success": "A reader can discover posts",
+                "not_included": "Ranking",
+                "plate": None,
+                "github_issue": None,
+                "disposition": "current",
+                "reason": None,
+            },
+        )
+
+    def test_trello_markdown_cake_and_projection_contracts_round_trip(self) -> None:
+        cake_body = format_cake_contract(
+            "Publish consistently",
+            next_slice="https://trello.com/c/slice",
+            trello_markdown=True,
+        )
+        projection_body = format_plate_projection_contract(
+            "https://github.com/example/blog/issues/7",
+            "https://trello.com/c/cake",
+            trello_markdown=True,
+        )
+
+        self.assertIn("**Direction:** Publish consistently", cake_body)
+        self.assertIn("\n\n**Next slice:** https://trello.com/c/slice", cake_body)
+        self.assertEqual(
+            parse_cake_contract(cake_body)["next_slice"],
+            "https://trello.com/c/slice",
+        )
+        self.assertEqual(
+            parse_plate_projection_contract(projection_body),
+            {
+                "slice": "https://github.com/example/blog/issues/7",
+                "cake": "https://trello.com/c/cake",
+                "disposition": "current",
+            },
+        )
+
     def test_current_slice_links_round_trip_as_stable_urls(self) -> None:
         body = format_cake_contract(
             "Publish consistently",

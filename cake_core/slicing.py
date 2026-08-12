@@ -68,6 +68,7 @@ def _cake_body(
         cake.get("current_slices", []),
         repository if repository is not None else cake.get("repository"),
         slice_index if slice_index is not None else list(cake.get("slice_index") or []),
+        trello_markdown=True,
     )
 
 
@@ -209,6 +210,7 @@ class CakeSlicer:
         not_included: str | None,
         disposition: str,
         plate: str | None = None,
+        trello_markdown: bool = False,
     ) -> dict[str, str]:
         if not title.strip():
             raise CakeError("A Slice needs a title")
@@ -221,6 +223,7 @@ class CakeSlicer:
                 not_included,
                 disposition=disposition,
                 plate=plate,
+                trello_markdown=trello_markdown,
             ),
         }
 
@@ -259,6 +262,7 @@ class CakeSlicer:
             success=success,
             not_included=not_included,
             disposition="candidate",
+            trello_markdown=provider == "plate",
         )
         if provider == "github":
             assert repository
@@ -392,6 +396,7 @@ class CakeSlicer:
             not_included=not_included,
             disposition=disposition,
             plate=current.get("plate") if current.get("adapter") == "github" else None,
+            trello_markdown=current.get("adapter") != "github",
         )
         write = {
             "action": "update_github_slice_issue"
@@ -475,6 +480,7 @@ class CakeSlicer:
             success=success,
             not_included=not_included,
             disposition=disposition,
+            trello_markdown=True,
         )
         target_index = _append_reference(
             list(cake.get("slice_index") or []), _card_ref(current)
@@ -597,6 +603,7 @@ class CakeSlicer:
             migration_dummy,
             _card_ref(cake),
             disposition="migrated",
+            trello_markdown=True,
         ).replace(migration_dummy, CREATED_GITHUB_SLICE_URL)
         payload = {
             "operation": "migrate_slice_to_github",

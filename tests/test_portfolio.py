@@ -136,7 +136,7 @@ class PortfolioTest(unittest.TestCase):
         self.assertEqual(result["write"]["list"], {"id": "games", "name": "Games"})
         self.assertEqual(result["write"]["title"], "Orb")
         self.assertIn(
-            "Direction: Build a programmable orb-spider web game",
+            "**Direction:** Build a programmable orb-spider web game",
             result["write"]["body"],
         )
         self.assertEqual(trello.writes, [])
@@ -380,9 +380,9 @@ class PortfolioTest(unittest.TestCase):
 
         slice_write = trello.writes[0][1]
         cake_write = trello.writes[1][1]
-        self.assertIn("Cake: https://trello.com/c/blog", slice_write["description"])
-        self.assertIn("Current slices: https://trello.com/c/feed", cake_write["description"])
-        self.assertNotIn("Next slice:", cake_write["description"])
+        self.assertIn("**Cake:** https://trello.com/c/blog", slice_write["description"])
+        self.assertIn("**Current slices:** https://trello.com/c/feed", cake_write["description"])
+        self.assertNotIn("**Next slice:**", cake_write["description"])
 
     def test_pull_of_github_slice_creates_cross_linked_plate_projection(self) -> None:
         trello = FakeTrello()
@@ -427,14 +427,14 @@ class PortfolioTest(unittest.TestCase):
 
         projection_write = trello.writes[0][1]
         cake_write = trello.writes[1][1]
-        self.assertIn(f"Slice: {issue_url}", projection_write["description"])
+        self.assertIn(f"**Slice:** {issue_url}", projection_write["description"])
         issue_body = github.update_issue.call_args.kwargs["body"]
         self.assertIn("Plate: https://trello.com/c/created-slice", issue_body)
         self.assertIn(
-            "Current slices: https://trello.com/c/created-slice",
+            "**Current slices:** https://trello.com/c/created-slice",
             cake_write["description"],
         )
-        self.assertNotIn("Next slice:", cake_write["description"])
+        self.assertNotIn("**Next slice:**", cake_write["description"])
 
     def test_promoting_a_pantry_cake_links_its_already_current_slice(self) -> None:
         trello = FakeTrello()
@@ -470,8 +470,8 @@ class PortfolioTest(unittest.TestCase):
         )
 
         write = trello.writes[0][1]
-        self.assertIn(f"Current slices: {slice_url}", write["description"])
-        self.assertNotIn("Next slice:", write["description"])
+        self.assertIn(f"**Current slices:** {slice_url}", write["description"])
+        self.assertNotIn("**Next slice:**", write["description"])
         self.assertEqual(write["board_id"], "stand")
         self.assertEqual(write["list_id"], "on")
 
@@ -523,8 +523,8 @@ class PortfolioTest(unittest.TestCase):
         )
 
         cake_write = trello.writes[1][1]
-        self.assertIn("Next slice: https://trello.com/c/search", cake_write["description"])
-        self.assertNotIn("Current slices:", cake_write["description"])
+        self.assertIn("**Next slice:** https://trello.com/c/search", cake_write["description"])
+        self.assertNotIn("**Current slices:**", cake_write["description"])
 
     def test_apply_rejects_stale_confirmation_before_writing(self) -> None:
         portfolio = CakePortfolio(config=config(), trello=FakeTrello(), github=FakeGitHub())

@@ -7,6 +7,7 @@ from typing import Any
 
 from .domain import (
     canonical_ref,
+    parse_contract_field_line,
 )
 from .portfolio import CakePortfolio
 
@@ -161,9 +162,9 @@ def _finding_for_issue(
 def _contract_fields(description: str) -> set[str]:
     fields: set[str] = set()
     for line in description.splitlines():
-        match = re.match(r"^([^:\n]+):", line)
-        if match:
-            fields.add(" ".join(match.group(1).casefold().strip().split()))
+        parsed = parse_contract_field_line(line)
+        if parsed:
+            fields.add(" ".join(parsed[0].casefold().strip().split()))
     return fields
 
 

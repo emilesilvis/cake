@@ -54,7 +54,11 @@ def healthy_snapshot() -> dict:
                 "id": "gym",
                 "url": "https://trello.com/c/gym",
                 "name": "Gym",
-                "desc": "Cadence: Twice weekly\nLoad: Two sessions\nSupports: Health",
+                "desc": (
+                    "**Cadence:** Twice weekly\n\n"
+                    "**Load:** Two sessions\n\n"
+                    "**Supports:** Health"
+                ),
             }
         ],
         "source_health": [],
