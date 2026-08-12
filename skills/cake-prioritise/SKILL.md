@@ -19,6 +19,8 @@ Read `../../CONTEXT.md` completely before acting. Choose focus in the context of
 8. Build one coherent transition plan. Preview it with the helper, show the exact operations, resulting state, and any strong capacity warning, then wait for explicit approval.
 9. Apply the identical plan with its confirmation token. If state changed, preview again. Capacity overage never hard-blocks, but pass `--allow-capacity-overage` only after the user explicitly accepts the reviewed overage.
 
+If a current Plate card was added before its parent Cake existed, repair it in three separately approved writes: use `create-cake` to put the mature parent in Pantry, use `cake-slice adopt` to attach and shape the parentless card, then preview and apply `move_cake` to admit the parent to the Stand. Do not create a duplicate Cake, reparent an owned Slice, or combine unseen writes under one approval.
+
 ## State rules
 
 - Pantry contains possible, still-ill-defined Cakes. Cake Stand contains only Cakes. Admission to Cake Stand is an explicit commitment with Direction and either a valid Next Slice or a current Slice.
@@ -51,10 +53,16 @@ Run from this skill directory. A plan is JSON with `operations` and optional ses
 ```bash
 python3 scripts/portfolio.py config get
 python3 scripts/portfolio.py snapshot
+python3 scripts/portfolio.py create-cake \
+  --name '<Cake>' \
+  --direction '<direction>' \
+  --pantry-list '<Pantry list>'
 python3 scripts/portfolio.py preview --plan @/path/to/plan.json
 python3 scripts/portfolio.py apply --plan @/path/to/plan.json \
   --confirmation-token '<token>'
 ```
+
+Run `create-cake` once without `--apply-token` to preview it, then repeat the identical command with `--apply-token '<token>'` after approval.
 
 Configure new boards without migrating cards:
 

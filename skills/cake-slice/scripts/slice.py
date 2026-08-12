@@ -49,6 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--cake", required=True)
     update.add_argument("--slice", required=True, dest="slice_reference")
     add_draft(update)
+
+    adopt = subparsers.add_parser("adopt")
+    adopt.add_argument("--cake", required=True)
+    adopt.add_argument("--slice", required=True, dest="slice_reference")
+    add_draft(adopt)
     return parser
 
 
@@ -71,6 +76,8 @@ def main() -> int:
             }
             if args.command == "create":
                 result = slicer.create(args.cake, **values)
+            elif args.command == "adopt":
+                result = slicer.adopt(args.cake, args.slice_reference, **values)
             else:
                 result = slicer.update(args.cake, args.slice_reference, **values)
         emit(result)

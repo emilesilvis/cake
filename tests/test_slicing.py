@@ -50,6 +50,105 @@ def portfolio_for(cake):
 
 
 class SlicingTest(unittest.TestCase):
+    def test_adopt_previews_assigning_a_parent_without_changing_membership(self) -> None:
+        cake = parent()
+        portfolio = portfolio_for(cake)
+        card = {
+            "id": "slice",
+            "url": "https://trello.com/c/slice",
+            "shortLink": "slice",
+            "idBoard": "plate",
+            "idList": "eating",
+            "name": "Orb: /grill-me session",
+            "desc": "",
+            "closed": False,
+            "pos": 1,
+        }
+        portfolio.trello.locate_card.return_value = card
+        slicer = CakeSlicer(portfolio)
+
+        result = slicer.adopt(
+            cake["url"],
+            card["url"],
+            title="Orb: Complete a /grill-me session",
+            outcome="The open design decisions are stress-tested",
+            success="One next Slice is recommended",
+        )
+
+        self.assertEqual(result["status"], "preview")
+        self.assertEqual(result["write"]["action"], "adopt_parentless_plate_card")
+        self.assertIn("Cake: https://trello.com/c/cake", result["write"]["body"])
+        self.assertIn("Disposition: Current", result["write"]["body"])
+        portfolio.trello.update_card.assert_not_called()
+
+    def test_adopt_refuses_to_reparent_an_existing_slice(self) -> None:
+        cake = parent()
+        portfolio = portfolio_for(cake)
+        portfolio.trello.locate_card.return_value = {
+            "id": "slice",
+            "url": "https://trello.com/c/slice",
+            "shortLink": "slice",
+            "idBoard": "plate",
+            "idList": "eating",
+            "name": "Existing Slice",
+            "desc": format_slice_contract(
+                "https://trello.com/c/another-cake", "Outcome", "Success"
+            ),
+            "closed": False,
+            "pos": 1,
+        }
+        slicer = CakeSlicer(portfolio)
+
+        with self.assertRaisesRegex(CakeError, "cannot reparent"):
+            slicer.adopt(
+                cake["url"],
+                "https://trello.com/c/slice",
+                title="New title",
+                outcome="New outcome",
+                success="New success",
+            )
+
+        portfolio.trello.update_card.assert_not_called()
+
+    def test_matching_adopt_token_updates_only_the_plate_card_contract(self) -> None:
+        cake = parent()
+        portfolio = portfolio_for(cake)
+        card = {
+            "id": "slice",
+            "url": "https://trello.com/c/slice",
+            "shortLink": "slice",
+            "idBoard": "plate",
+            "idList": "eating",
+            "name": "Orb: /grill-me session",
+            "desc": "",
+            "closed": False,
+            "pos": 1,
+        }
+        portfolio.trello.locate_card.return_value = card
+        slicer = CakeSlicer(portfolio)
+        values = {
+            "title": "Orb: Complete a /grill-me session",
+            "outcome": "The open design decisions are stress-tested",
+            "success": "One next Slice is recommended",
+        }
+        preview = slicer.adopt(cake["url"], card["url"], **values)
+        portfolio.trello.update_card.return_value = {
+            **card,
+            "name": preview["write"]["title"],
+            "desc": preview["write"]["body"],
+        }
+
+        result = slicer.adopt(
+            cake["url"],
+            card["url"],
+            **values,
+            confirmation_token=preview["confirmation_token"],
+        )
+
+        self.assertEqual(result["status"], "adopted")
+        kwargs = portfolio.trello.update_card.call_args.kwargs
+        self.assertEqual(set(kwargs), {"name", "description"})
+        self.assertIn("Disposition: Current", kwargs["description"])
     def test_create_always_previews_one_archived_plate_card(self) -> None:
         cake = parent()
         portfolio = portfolio_for(cake)

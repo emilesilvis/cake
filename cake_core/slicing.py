@@ -68,17 +68,13 @@ class CakeSlicer:
     def _plate_context(self) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
         return self.portfolio._trello_role("plate")
 
-    def _canonical_slice(
-        self,
-        cake: dict[str, Any],
-        reference: str,
-    ) -> dict[str, Any]:
+    def _plate_slice(self, reference: str) -> dict[str, Any]:
         plate_board, _ = self._plate_context()
         card = self.portfolio.trello.locate_card(reference)
         if card.get("idBoard") != plate_board["id"]:
             raise CakeError("Every canonical Slice must be a card on the configured Plate board")
         contract = parse_slice_contract(card.get("desc", ""))
-        record = {
+        return {
             "id": card["id"],
             "url": card.get("url") or card["id"],
             "name": card.get("name", ""),
@@ -87,6 +83,13 @@ class CakeSlicer:
             **contract,
             "raw": _compact_card(card),
         }
+
+    def _canonical_slice(
+        self,
+        cake: dict[str, Any],
+        reference: str,
+    ) -> dict[str, Any]:
+        record = self._plate_slice(reference)
         if not record.get("cake") or not _matches(cake, record["cake"]):
             raise CakeError("The Slice does not belong to the selected parent Cake")
         return record
@@ -308,6 +311,112 @@ class CakeSlicer:
             "confirmation_token": token_for(payload),
             **payload,
         }
+
+    def preview_adopt(
+        self,
+        cake_reference: str,
+        slice_reference: str,
+        *,
+        title: str,
+        outcome: str,
+        success: str,
+        not_included: str | None = None,
+        github_issue: str | None = None,
+    ) -> dict[str, Any]:
+        """Preview assigning a parent to an otherwise parentless Plate card."""
+
+        cake = self.read_cake(cake_reference)
+        current = self._plate_slice(slice_reference)
+        if current.get("cake"):
+            raise CakeError(
+                "Adopt only repairs a parentless Slice; it cannot reparent an existing Slice"
+            )
+        disposition = normalize(current.get("disposition", "candidate")) or "candidate"
+        if disposition in TERMINAL_SLICE_DISPOSITIONS:
+            raise CakeError("A Finished or Abandoned Slice cannot be adopted")
+        if current.get("canonical_state") == "open":
+            disposition = "current"
+        target = self._target(
+            cake,
+            title=title,
+            outcome=outcome,
+            success=success,
+            not_included=not_included,
+            github_issue=github_issue,
+            disposition=disposition,
+        )
+        write = {
+            "action": "adopt_parentless_plate_card",
+            "slice": current.get("url") or current["id"],
+            **target,
+        }
+        delivery_writes = self._delivery_writes_for_update(
+            current.get("github_issue"), github_issue, _card_ref(current)
+        )
+        payload = {
+            "operation": "adopt_slice",
+            "parent": _parent_state(cake),
+            "source": current,
+            "write": write,
+            "delivery_writes": delivery_writes,
+        }
+        return {
+            "status": "preview",
+            "confirmation_token": token_for(payload),
+            **payload,
+        }
+
+    def adopt(
+        self,
+        cake_reference: str,
+        slice_reference: str,
+        *,
+        title: str,
+        outcome: str,
+        success: str,
+        not_included: str | None = None,
+        github_issue: str | None = None,
+        confirmation_token: str | None = None,
+    ) -> dict[str, Any]:
+        preview = self.preview_adopt(
+            cake_reference,
+            slice_reference,
+            title=title,
+            outcome=outcome,
+            success=success,
+            not_included=not_included,
+            github_issue=github_issue,
+        )
+        if confirmation_token is None:
+            return preview
+        if confirmation_token != preview["confirmation_token"]:
+            raise CakeError("The approval is stale: the parent, Slice, draft, or delivery link changed")
+        write = preview["write"]
+        current = preview["source"]
+        card = self.portfolio.trello.update_card(
+            current["id"], name=write["title"], description=write["body"]
+        )
+        for delivery in preview["delivery_writes"]:
+            try:
+                self.portfolio.github.update_issue(
+                    delivery["issue"],
+                    title=delivery["title"],
+                    body=delivery["target_body"],
+                )
+            except CakeError as exc:
+                raise CakeError(
+                    f"Slice {current['url']} was adopted, but GitHub cross-linking failed; "
+                    f"reconcile {delivery['issue']} before continuing. Cause: {exc}"
+                ) from None
+        adopted = {
+            "id": card["id"],
+            "url": card.get("url") or card["id"],
+            "name": card.get("name", write["title"]),
+            "adapter": "plate",
+            "canonical_state": "archived" if card.get("closed") else "open",
+            **parse_slice_contract(card.get("desc", write["body"])),
+        }
+        return {"status": "adopted", "slice": adopted}
 
     def update(
         self,

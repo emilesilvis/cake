@@ -16,6 +16,7 @@ from .domain import (
     parse_cake_contract,
     parse_slice_contract,
     preview_transition,
+    token_for,
     trello_card_url,
     validate_snapshot,
 )
@@ -393,6 +394,86 @@ class CakePortfolio:
     ) -> dict[str, Any]:
         return preview_transition(self.snapshot(), operations, capacity_policies)
 
+    def preview_create_cake(
+        self,
+        *,
+        name: str,
+        direction: str,
+        pantry_list: str,
+        finished_when: str | None = None,
+    ) -> dict[str, Any]:
+        """Preview one mature Cake card in a named Pantry list."""
+
+        if not isinstance(name, str) or not name.strip():
+            raise CakeError("A Cake needs a name")
+        if not isinstance(direction, str) or not direction.strip():
+            raise CakeError("A mature Cake needs a Direction")
+        if not isinstance(pantry_list, str) or not pantry_list.strip():
+            raise CakeError("Choose a Pantry list for the Cake")
+        if finished_when is not None and (
+            not isinstance(finished_when, str) or not finished_when.strip()
+        ):
+            raise CakeError("Finished when must be non-empty text when supplied")
+
+        clean_name = name.strip()
+        snapshot = self.snapshot(include_candidates=False)
+        stand = snapshot.get("cake_stand", {})
+        existing = [
+            *snapshot.get("pantry", []),
+            *stand.get("on_stand", []),
+            *stand.get("parked", []),
+            *stand.get("finished", []),
+        ]
+        if any(normalize(cake.get("name", "")) == normalize(clean_name) for cake in existing):
+            raise CakeError(f"A non-archived Cake named {clean_name!r} already exists")
+
+        pantry_board = snapshot["sources"]["pantry"]
+        target_list = self.trello.list(pantry_board, pantry_list)
+        write = {
+            "action": "create_pantry_cake",
+            "board": {"id": pantry_board["id"], "name": pantry_board.get("name")},
+            "list": {"id": target_list["id"], "name": target_list.get("name")},
+            "title": clean_name,
+            "body": format_cake_contract(
+                direction.strip(),
+                finished_when=finished_when.strip() if finished_when else None,
+            ),
+        }
+        payload = {"operation": "create_cake", "write": write}
+        return {
+            "status": "preview",
+            "confirmation_token": token_for(payload),
+            **payload,
+        }
+
+    def create_cake(
+        self,
+        *,
+        name: str,
+        direction: str,
+        pantry_list: str,
+        finished_when: str | None = None,
+        confirmation_token: str | None = None,
+    ) -> dict[str, Any]:
+        preview = self.preview_create_cake(
+            name=name,
+            direction=direction,
+            pantry_list=pantry_list,
+            finished_when=finished_when,
+        )
+        if confirmation_token is None:
+            return preview
+        if confirmation_token != preview["confirmation_token"]:
+            raise CakeError("The approval is stale: the Pantry destination or Cake contract changed")
+
+        write = preview["write"]
+        created = self.trello.create_card(
+            write["list"]["id"],
+            name=write["title"],
+            description=write["body"],
+        )
+        return {"status": "created", "cake": _cake_from_card(created, "pantry")}
+
     def apply(
         self,
         operations: list[dict[str, Any]],
@@ -542,7 +623,7 @@ class CakePortfolio:
 
         if action == "move_cake":
             cake = self._cake_record(snapshot, operation["cake"])
-            self._move_cake_card(cake, operation["to"], operation)
+            self._move_cake_card(cake, operation["to"], operation, snapshot=snapshot)
             return
 
         if action == "archive_cake":
@@ -611,7 +692,12 @@ class CakePortfolio:
         )
 
     def _move_cake_card(
-        self, cake: dict[str, Any], target: str, operation: dict[str, Any]
+        self,
+        cake: dict[str, Any],
+        target: str,
+        operation: dict[str, Any],
+        *,
+        snapshot: dict[str, Any] | None = None,
     ) -> None:
         target = normalize(target).replace(" ", "_")
         stand_board, stand_lists = self._trello_role("cake_stand")
@@ -629,9 +715,19 @@ class CakePortfolio:
         if target in {"parked", "finished"}:
             values["next_slice"] = None
             values["current_slices"] = []
-        elif operation.get("next_slice"):
-            candidate = self._candidate_record(self.snapshot(), operation["next_slice"])
-            values["next_slice"] = _card_ref(candidate)
+        elif target == "on_stand":
+            source = snapshot or self.snapshot()
+            current = [
+                item
+                for item in (*source["plate"]["eating"], *source["plate"]["blocked"])
+                if _record_matches(cake, item.get("cake"))
+            ]
+            if current:
+                values["current_slices"] = [_card_ref(item) for item in current]
+                values["next_slice"] = None
+            elif operation.get("next_slice"):
+                candidate = self._candidate_record(source, operation["next_slice"])
+                values["next_slice"] = _card_ref(candidate)
         changes["description"] = format_cake_contract(
             values["direction"],
             values.get("next_slice"),

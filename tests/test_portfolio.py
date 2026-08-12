@@ -16,6 +16,9 @@ class FakeTrello:
             "Plate": {"id": "plate", "name": "Plate", "url": "https://trello.com/b/plate"},
         }
         self.board_lists = {
+            "pantry": {
+                "Games": {"id": "games", "name": "Games"},
+            },
             "stand": {
                 "On the stand": {"id": "on", "name": "On the stand"},
                 "Parked": {"id": "parked", "name": "Parked"},
@@ -53,6 +56,20 @@ class FakeTrello:
     def update_card(self, *args, **kwargs):
         self.writes.append((args, kwargs))
         return {"id": args[0], **kwargs}
+
+    def create_card(self, list_id, *, name, description, position="top"):
+        self.writes.append(
+            (("create_card", list_id), {"name": name, "description": description})
+        )
+        created = card(
+            "created-cake",
+            "pantry",
+            list_id,
+            name,
+            description,
+        )
+        self.board_cards["pantry"].append(created)
+        return created
 
 
 class FakeGitHub:
@@ -99,6 +116,60 @@ def config():
 
 
 class PortfolioTest(unittest.TestCase):
+    def test_create_cake_previews_exact_pantry_write_without_writing(self) -> None:
+        trello = FakeTrello()
+        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
+
+        result = portfolio.create_cake(
+            name="Orb",
+            direction="Build a programmable orb-spider web game",
+            pantry_list="Games",
+        )
+
+        self.assertEqual(result["status"], "preview")
+        self.assertEqual(result["write"]["list"], {"id": "games", "name": "Games"})
+        self.assertEqual(result["write"]["title"], "Orb")
+        self.assertIn(
+            "Direction: Build a programmable orb-spider web game",
+            result["write"]["body"],
+        )
+        self.assertEqual(trello.writes, [])
+
+    def test_create_cake_rejects_a_duplicate_non_archived_name(self) -> None:
+        trello = FakeTrello()
+        trello.board_cards["pantry"] = [
+            card("orb", "pantry", "games", "Orb", "")
+        ]
+        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
+
+        with self.assertRaisesRegex(CakeError, "already exists"):
+            portfolio.create_cake(
+                name=" orb ",
+                direction="Build a programmable orb-spider web game",
+                pantry_list="Games",
+            )
+
+        self.assertEqual(trello.writes, [])
+
+    def test_matching_create_cake_token_writes_one_pantry_card(self) -> None:
+        trello = FakeTrello()
+        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
+        values = {
+            "name": "Orb",
+            "direction": "Build a programmable orb-spider web game",
+            "pantry_list": "Games",
+        }
+        preview = portfolio.create_cake(**values)
+
+        result = portfolio.create_cake(
+            **values,
+            confirmation_token=preview["confirmation_token"],
+        )
+
+        self.assertEqual(result["status"], "created")
+        self.assertEqual(result["cake"]["name"], "Orb")
+        self.assertEqual(len(trello.writes), 1)
+
     def test_archived_cake_is_hidden_but_resolves_an_archived_slice_parent(self) -> None:
         trello = FakeTrello()
         cake_url = "https://trello.com/c/old-routine"
@@ -289,6 +360,45 @@ class PortfolioTest(unittest.TestCase):
         self.assertIn("Cake: https://trello.com/c/blog", slice_write["description"])
         self.assertIn("Current slices: https://trello.com/c/feed", cake_write["description"])
         self.assertNotIn("Next slice:", cake_write["description"])
+
+    def test_promoting_a_pantry_cake_links_its_already_current_slice(self) -> None:
+        trello = FakeTrello()
+        cake_url = "https://trello.com/c/orb"
+        slice_url = "https://trello.com/c/grill"
+        trello.board_cards["pantry"] = [
+            card(
+                "orb",
+                "pantry",
+                "games",
+                "Orb",
+                format_cake_contract("Build a programmable orb-spider web game"),
+            )
+        ]
+        trello.board_cards["plate"] = [
+            card(
+                "grill",
+                "plate",
+                "eating",
+                "Orb: Complete a /grill-me session",
+                format_slice_contract(
+                    cake_url,
+                    "The open design decisions are stress-tested",
+                    "One next Slice is recommended",
+                    disposition="current",
+                ),
+            )
+        ]
+        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
+
+        portfolio._execute(
+            {"action": "move_cake", "cake": cake_url, "to": "on_stand"}
+        )
+
+        write = trello.writes[0][1]
+        self.assertIn(f"Current slices: {slice_url}", write["description"])
+        self.assertNotIn("Next slice:", write["description"])
+        self.assertEqual(write["board_id"], "stand")
+        self.assertEqual(write["list_id"], "on")
 
     def test_exit_replaces_the_last_current_link_with_next_slice(self) -> None:
         trello = FakeTrello()

@@ -260,6 +260,24 @@ class TransitionTest(unittest.TestCase):
                 [{"action": "move_cake", "cake": parent["url"], "to": "parked"}],
             )
 
+    def test_promoting_a_pantry_cake_adopts_its_current_slice_link(self) -> None:
+        parent = cake("orb")
+        parent["state"] = "pantry"
+        grill = slice_record("grill", parent)
+        plate_slice = current(grill, parent)
+        source = snapshot([], [grill], [plate_slice])
+        source["pantry"] = [parent]
+
+        result = preview_transition(
+            source,
+            [{"action": "move_cake", "cake": parent["url"], "to": "on_stand"}],
+        )
+
+        promoted = result["target"]["cake_stand"]["on_stand"][0]
+        self.assertEqual(promoted["current_slice_links"], [grill["url"]])
+        self.assertIsNone(promoted["next_slice"])
+        self.assertEqual(result["target_issues"]["errors"], [])
+
     def test_blocked_slice_counts_toward_soft_plate_limit(self) -> None:
         first_parent = cake("one", next_slice="https://trello.com/c/one-slice")
         second_parent = cake("two")

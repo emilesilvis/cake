@@ -122,6 +122,13 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot = subparsers.add_parser("snapshot")
     snapshot.add_argument("--without-candidates", action="store_true")
 
+    create_cake = subparsers.add_parser("create-cake")
+    create_cake.add_argument("--name", required=True)
+    create_cake.add_argument("--direction", required=True)
+    create_cake.add_argument("--pantry-list", required=True)
+    create_cake.add_argument("--finished-when")
+    create_cake.add_argument("--apply-token")
+
     preview = subparsers.add_parser("preview")
     add_plan(preview)
 
@@ -143,6 +150,14 @@ def main() -> int:
             portfolio = CakePortfolio(config_path=CONFIG_PATH)
             if args.command == "snapshot":
                 result = portfolio.snapshot(include_candidates=not args.without_candidates)
+            elif args.command == "create-cake":
+                result = portfolio.create_cake(
+                    name=args.name,
+                    direction=args.direction,
+                    pantry_list=args.pantry_list,
+                    finished_when=args.finished_when,
+                    confirmation_token=args.apply_token,
+                )
             else:
                 plan = plan_value(args.plan)
                 if args.command == "preview":

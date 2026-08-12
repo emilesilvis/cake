@@ -637,6 +637,14 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
                 raise CakeError("A Cake needs a Direction before promotion")
             if not current and not cake.get("next_slice"):
                 raise CakeError("A Cake needs a valid Next Slice before promotion")
+            if current and operation.get("next_slice"):
+                raise CakeError("A Cake with a current Slice cannot also receive a Next Slice")
+            if current:
+                cake["current_slice_links"] = [
+                    trello_card_url(item.get("slice") or item.get("url") or item.get("id"))
+                    for item in current
+                ]
+                cake["next_slice"] = None
             if cake.get("next_slice"):
                 _candidate_for(snapshot, cake, cake["next_slice"])
         _move_cake(snapshot, cake, target)
