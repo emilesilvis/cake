@@ -6,10 +6,13 @@ import unittest
 from cake_core.domain import (
     CakeError,
     format_cake_contract,
+    format_plate_projection_contract,
     format_slice_contract,
+    github_repository_name,
     is_github_issue_url,
     is_trello_card_url,
     parse_cake_contract,
+    parse_plate_projection_contract,
     parse_slice_contract,
     preview_transition,
     canonical_ref,
@@ -18,7 +21,12 @@ from cake_core.domain import (
 )
 
 
-def cake(reference: str, *, next_slice: str | None = None) -> dict:
+def cake(
+    reference: str,
+    *,
+    next_slice: str | None = None,
+    repository: str | None = None,
+) -> dict:
     return {
         "id": reference,
         "url": f"https://trello.com/c/{reference}",
@@ -26,6 +34,8 @@ def cake(reference: str, *, next_slice: str | None = None) -> dict:
         "state": "on_stand",
         "direction": "Make useful progress",
         "finished_when": None,
+        "repository": repository,
+        "slice_index": [],
         "current_slice_links": [],
         "next_slice": next_slice,
     }
@@ -50,8 +60,16 @@ def slice_record(reference: str, parent: dict, disposition: str = "candidate") -
 def snapshot(cakes: list[dict], slices: list[dict], eating: list[dict] | None = None) -> dict:
     current_slices = eating or []
     for parent in cakes:
+        parent["slice_index"] = [
+            item["url"]
+            for item in slices
+            if canonical_ref(item["cake"]) == canonical_ref(parent["url"])
+            and item["adapter"] == ("github" if parent.get("repository") else "plate")
+        ]
         parent["current_slice_links"] = [
-            item["url"] for item in current_slices if canonical_ref(item["cake"]) == canonical_ref(parent["url"])
+            item["plate_card"]
+            for item in current_slices
+            if canonical_ref(item["cake"]) == canonical_ref(parent["url"])
         ]
     return {
         "pantry": [],
@@ -65,8 +83,8 @@ def snapshot(cakes: list[dict], slices: list[dict], eating: list[dict] | None = 
 def current(record: dict, parent: dict, lane: str = "eating") -> dict:
     return {
         **deepcopy(record),
-        "id": f"plate-{record['id']}",
-        "plate_card": f"plate-{record['id']}",
+        "id": record["id"],
+        "plate_card": record["url"],
         "slice": record["url"],
         "cake": parent["url"],
         "lane": lane,
@@ -85,6 +103,8 @@ class ContractTest(unittest.TestCase):
             {
                 "direction": "Publish consistently",
                 "finished_when": "Habit is stable",
+                "repository": None,
+                "slice_index": [],
                 "current_slice_links": [],
                 "next_slice": "https://trello.com/c/slice",
             },
@@ -96,6 +116,65 @@ class ContractTest(unittest.TestCase):
             "Ranking",
         )
         self.assertEqual(parse_slice_contract(slice_body)["not_included"], "Ranking")
+
+    def test_trello_markdown_contracts_render_cleanly_and_round_trip(self) -> None:
+        body = format_slice_contract(
+            "https://trello.com/c/cake",
+            "Discovery feed is usable",
+            "A reader can discover posts",
+            "Ranking",
+            disposition="current",
+            trello_markdown=True,
+        )
+
+        self.assertEqual(
+            body,
+            "**Cake:** https://trello.com/c/cake\n\n"
+            "**Outcome:** Discovery feed is usable\n\n"
+            "**Success:** A reader can discover posts\n\n"
+            "**Not included:** Ranking\n\n"
+            "**Disposition:** Current",
+        )
+        self.assertEqual(
+            parse_slice_contract(body),
+            {
+                "cake": "https://trello.com/c/cake",
+                "outcome": "Discovery feed is usable",
+                "success": "A reader can discover posts",
+                "not_included": "Ranking",
+                "plate": None,
+                "github_issue": None,
+                "disposition": "current",
+                "reason": None,
+            },
+        )
+
+    def test_trello_markdown_cake_and_projection_contracts_round_trip(self) -> None:
+        cake_body = format_cake_contract(
+            "Publish consistently",
+            next_slice="https://trello.com/c/slice",
+            trello_markdown=True,
+        )
+        projection_body = format_plate_projection_contract(
+            "https://github.com/example/blog/issues/7",
+            "https://trello.com/c/cake",
+            trello_markdown=True,
+        )
+
+        self.assertIn("**Direction:** Publish consistently", cake_body)
+        self.assertIn("\n\n**Next slice:** https://trello.com/c/slice", cake_body)
+        self.assertEqual(
+            parse_cake_contract(cake_body)["next_slice"],
+            "https://trello.com/c/slice",
+        )
+        self.assertEqual(
+            parse_plate_projection_contract(projection_body),
+            {
+                "slice": "https://github.com/example/blog/issues/7",
+                "cake": "https://trello.com/c/cake",
+                "disposition": "current",
+            },
+        )
 
     def test_current_slice_links_round_trip_as_stable_urls(self) -> None:
         body = format_cake_contract(
@@ -121,24 +200,47 @@ class ContractTest(unittest.TestCase):
         )
         self.assertTrue(is_trello_card_url("https://trello.com/c/AbC123xy"))
 
-    def test_optional_github_issue_round_trips_as_a_delivery_link(self) -> None:
+    def test_repository_and_provider_neutral_slice_index_round_trip(self) -> None:
         issue = "https://github.com/example/blog/issues/7"
-        body = format_slice_contract(
-            "https://trello.com/c/cake",
-            "Discovery feed is usable",
-            "A reader can discover posts",
-            github_issue=issue,
+        body = format_cake_contract(
+            "Publish consistently",
+            next_slice=issue,
+            repository="example/blog",
+            slice_index=[issue],
         )
-        self.assertEqual(parse_slice_contract(body)["github_issue"], issue)
+        parsed = parse_cake_contract(body)
+        self.assertEqual(parsed["repository"], "https://github.com/example/blog")
+        self.assertEqual(parsed["slice_index"], [issue])
+        self.assertEqual(parsed["next_slice"], issue)
+        self.assertEqual(github_repository_name(parsed["repository"]), "example/blog")
         self.assertTrue(is_github_issue_url(issue))
 
-    def test_delivery_link_must_be_a_github_issue_url(self) -> None:
-        with self.assertRaisesRegex(CakeError, "GitHub issue URL"):
+    def test_github_slice_plate_backlink_round_trips(self) -> None:
+        plate = "https://trello.com/c/projection"
+        body = format_slice_contract(
+            "https://trello.com/c/cake",
+            "Outcome",
+            "Success",
+            disposition="current",
+            plate=plate,
+        )
+        self.assertEqual(parse_slice_contract(body)["plate"], plate)
+
+    def test_plate_projection_contract_round_trips(self) -> None:
+        issue = "https://github.com/example/blog/issues/7"
+        body = format_plate_projection_contract(issue, "https://trello.com/c/cake")
+        self.assertEqual(
+            parse_plate_projection_contract(body),
+            {"slice": issue, "cake": "https://trello.com/c/cake", "disposition": "current"},
+        )
+
+    def test_plate_backlink_must_be_a_trello_card_url(self) -> None:
+        with self.assertRaisesRegex(CakeError, "Plate projection"):
             format_slice_contract(
                 "https://trello.com/c/cake",
                 "Outcome",
                 "Success",
-                github_issue="https://github.com/example/blog",
+                plate="not-a-trello-card",
             )
 
     def test_abandon_requires_a_reason(self) -> None:
@@ -191,6 +293,35 @@ class TransitionTest(unittest.TestCase):
         self.assertIsNone(target_parent["next_slice"])
         self.assertEqual(target_parent["current_slice_links"], [candidate["url"]])
         self.assertEqual(result["target"]["plate"]["eating"][0]["slice"], candidate["url"])
+
+    def test_pull_of_github_slice_plans_a_plate_projection(self) -> None:
+        issue_url = "https://github.com/example/blog/issues/7"
+        parent = cake("blog", next_slice=issue_url, repository="example/blog")
+        candidate = {
+            "id": "example/blog#7",
+            "url": issue_url,
+            "name": "Blog: Rewrite five posts",
+            "cake": parent["url"],
+            "outcome": "Five posts read naturally",
+            "success": "All five pass the checker",
+            "not_included": None,
+            "plate": None,
+            "disposition": "candidate",
+            "adapter": "github",
+            "canonical_state": "open",
+        }
+
+        result = preview_transition(
+            snapshot([parent], [candidate]),
+            [{"action": "pull", "cake": parent["url"], "lane": "eating"}],
+        )
+
+        target_parent = result["target"]["cake_stand"]["on_stand"][0]
+        current_slice = result["target"]["plate"]["eating"][0]
+        self.assertEqual(current_slice["slice"], issue_url)
+        self.assertTrue(current_slice["plate_card"].startswith("planned:plate-projection:"))
+        self.assertEqual(target_parent["current_slice_links"], [current_slice["plate_card"]])
+        self.assertEqual(result["target"]["slice_catalog"][0]["plate"], current_slice["plate_card"])
 
     def test_nominate_and_pull_can_add_a_second_current_slice(self) -> None:
         parent = cake("masters")

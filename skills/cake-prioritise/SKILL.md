@@ -11,10 +11,10 @@ Read `../../CONTEXT.md` completely before acting. Choose focus in the context of
 
 1. Run `python3 scripts/portfolio.py config get`. If Pantry, Cake Stand, or Plate is missing, ask for the new board reference and configure it. Do not migrate old cards as part of this skill.
 2. State the persisted portfolio priority and confirm or replace it every run. A conversational replacement lasts for this run unless the user asks to save it.
-3. Run `snapshot`. Treat Plate and Cake Stand order as advisory claims to challenge. Consider serious Pantry challengers as well as every Cake on the Stand.
+3. Run `snapshot`. It reads every Cake's full Slice Registry as well as Plate. Treat Plate and Cake Stand order as advisory claims to challenge. Consider serious Pantry challengers as well as every Cake on the Stand, including their inactive but viable Slices.
 4. Resolve current WIP limits from their provider. A suffix such as `On the stand /3` or `Eating /2` is an explicit list limit; also inspect Trello List Limits with available browser access and include configured capacity records and conversational constraints. Blocked Slices remain on Plate and count. If a limit cannot be observed, say so rather than inventing it.
 5. Fail closed only when unavailable data is relevant to the decision or transition. Surface external drift; never auto-sync it. If a serious contender has stale or insufficient context, ask instead of rejecting it for poor card maintenance.
-6. Normalize one valid Slice for each serious contender. Read `../cake-slice/SKILL.md` and use its quality gates. If the winner needs a new or reshaped canonical Slice, complete that separately through `cake-slice`, then re-read the portfolio.
+6. Normalize one valid Slice for each serious contender. Read `../cake-slice/SKILL.md` and use its quality gates. Resolve candidates from the Cake's provider-aware Slice Index, not only from Plate. If the winner needs a new or reshaped canonical Slice, complete that separately through `cake-slice`, then re-read the portfolio.
 7. Compare the viable shortlist with explicit pairwise trade-offs. Apply hard consequences, viability, portfolio movement, then opportunity cost. Name one winner and what waits. If Cake Stand or Plate exceeds its limit, give the complete keep/park or keep/pause set.
 8. Build one coherent transition plan. Preview it with the helper, show the exact operations, resulting state, and any strong capacity warning, then wait for explicit approval.
 9. Apply the identical plan with its confirmation token. If state changed, preview again. Capacity overage never hard-blocks, but pass `--allow-capacity-overage` only after the user explicitly accepts the reviewed overage.
@@ -24,16 +24,16 @@ If a current Plate card was added before its parent Cake existed, repair it in t
 ## State rules
 
 - Pantry contains possible, still-ill-defined Cakes. Cake Stand contains only Cakes. Admission to Cake Stand is an explicit commitment with Direction and either a valid Next Slice or a current Slice.
-- A Cake with any Plate Slice is **Being Eaten** and its `Current slices:` field must link to every current Slice with stable `https://trello.com/c/<shortLink>` URLs. A Cake on the Stand without one is **Waiting on the Stand** and must have exactly one valid `Next slice:` link in the same URL form. Current and Next Slice links are mutually exclusive; Plate membership remains authoritative.
-- Every Slice has a reciprocal `Cake:` link to its parent in the same stable Trello URL form. Never store a Cake or Slice UUID as a cross-link. Every membership transition must update both sides before it is complete.
+- Every Cake card has an exhaustive `Slice index:` of canonical Slice Record URLs. If it has `Repository:`, canonical Slices are GitHub issues in that repository; otherwise they are Trello cards on Plate. The index exposes inactive candidates and history, but does not decide currentness or priority.
+- A Cake with any Plate entry is **Being Eaten** and its `Current slices:` field must link to every current Plate card with stable `https://trello.com/c/<shortLink>` URLs. A Cake on the Stand without one is **Waiting on the Stand** and must have exactly one valid `Next slice:` link to a canonical Trello card or GitHub issue. Current and Next Slice links are mutually exclusive; Plate membership remains authoritative.
+- Every canonical Slice has a reciprocal `Cake:` link to its parent in stable Trello URL form. A current GitHub Slice also has a reciprocal Plate Projection: the issue uses `Plate:` and the Trello card uses `Slice:`. Never store a UUID as a cross-link. Every membership transition must update all affected links before it is complete.
 - Only the nominated Next Slice may be pulled. `cake-prioritise` may replace that nomination whenever priorities change. Pulling replaces the Cake's Next Slice link with a Current Slice link. To add another current Slice for the same Cake, nominate and pull it in the same plan.
-- Plate is the sole canonical registry for every Slice and the source of truth for current WIP. Open cards live in Eating or Blocked; non-current Slice cards stay archived on Plate. Finish, Pause, or Abandon archives a Slice; Abandon requires a reason.
+- Plate is solely the source of truth for current WIP. A Trello-only Slice reopens its canonical card in Eating or Blocked. A GitHub-backed Slice creates a Plate Projection there. Finish, Pause, or Abandon removes the Plate entry; Abandon requires a reason. Paused GitHub issues remain open, while Finished and Abandoned issues close.
 - A recurring occurrence that becomes due again substantially unchanged is a Capacity Constraint, not a Slice. Keep one persistent capacity card with Cadence, Load, and Supports; do not generate daily or weekly Plate cards. A bounded effort to establish or materially change the rhythm may still be a Cake and Slice.
 - A configured Capacity Constraint list may share the Cake Stand Trello board, but its cards are not Cake Stand members and do not consume Cake Stand or Plate WIP. Always include their load when judging what fits.
-- A Slice may link to a GitHub delivery issue, but Trello remains canonical. If present, the Trello `GitHub issue:` and GitHub `Cake Slice:` links must be reciprocal.
 - Exiting a Slice removes its Cake-side Current Slice link. When the last current Slice exits, nominate another Slice or Park/Finish the parent Cake in the same plan. A Cake cannot leave the Stand while one of its Slices remains on Plate.
 - Parked and Finished Cakes live alongside the active Cake Stand list but are not active membership. Parked is only for a still-valid Cake that may return. When a former Cake was superseded or reclassified and should no longer be a portfolio option, archive its card after every current Slice has exited; archived Cakes remain historical link targets only.
-- Keep Trello human-facing. Do not create retirement lists, migration notes, audit comments, UUID links, origin fields, or status metadata. Use normal Cake and Slice contracts, Capacity Constraint fields, clickable links, and Trello's own archive.
+- Keep Trello portfolio-facing. Do not create retirement lists, audit comments, UUID links, origin fields, or parallel status metadata. Use normal Cake, Slice, Projection, and Capacity Constraint contracts with clickable links and provider-native archive or issue state.
 - Limits strongly discourage overage and require explicit review; they do not mechanically block it.
 
 ## Decision output
@@ -56,7 +56,8 @@ python3 scripts/portfolio.py snapshot
 python3 scripts/portfolio.py create-cake \
   --name '<Cake>' \
   --direction '<direction>' \
-  --pantry-list '<Pantry list>'
+  --pantry-list '<Pantry list>' \
+  --repository '<optional GitHub owner/repository>'
 python3 scripts/portfolio.py preview --plan @/path/to/plan.json
 python3 scripts/portfolio.py apply --plan @/path/to/plan.json \
   --confirmation-token '<token>'

@@ -26,7 +26,6 @@ def add_draft(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--outcome", required=True)
     parser.add_argument("--success", required=True)
     parser.add_argument("--not-included")
-    parser.add_argument("--github-issue")
     parser.add_argument("--apply-token")
 
 
@@ -41,6 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
     read_slice.add_argument("--cake", required=True)
     read_slice.add_argument("--slice", required=True, dest="slice_reference")
 
+    sync_index = subparsers.add_parser("sync-index")
+    sync_index.add_argument("--cake", required=True)
+    sync_index.add_argument("--apply-token")
+
     create = subparsers.add_parser("create")
     create.add_argument("--cake", required=True)
     add_draft(create)
@@ -54,6 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
     adopt.add_argument("--cake", required=True)
     adopt.add_argument("--slice", required=True, dest="slice_reference")
     add_draft(adopt)
+
+    migrate = subparsers.add_parser("migrate-to-github")
+    migrate.add_argument("--cake", required=True)
+    migrate.add_argument("--slice", required=True, dest="slice_reference")
+    migrate.add_argument("--repository", required=True)
+    migrate.add_argument("--apply-token")
     return parser
 
 
@@ -65,13 +74,23 @@ def main() -> int:
             result = slicer.read_cake(args.cake)
         elif args.command == "read-slice":
             result = slicer.read_slice(args.cake, args.slice_reference)
+        elif args.command == "sync-index":
+            result = slicer.sync_index(
+                args.cake, confirmation_token=args.apply_token
+            )
+        elif args.command == "migrate-to-github":
+            result = slicer.migrate_to_github(
+                args.cake,
+                args.slice_reference,
+                repository=args.repository,
+                confirmation_token=args.apply_token,
+            )
         else:
             values = {
                 "title": args.title,
                 "outcome": args.outcome,
                 "success": args.success,
                 "not_included": args.not_included,
-                "github_issue": args.github_issue,
                 "confirmation_token": args.apply_token,
             }
             if args.command == "create":

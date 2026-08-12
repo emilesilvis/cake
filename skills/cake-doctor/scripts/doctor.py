@@ -23,17 +23,14 @@ def emit(value: Any) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    check = subparsers.add_parser("check")
-    check.add_argument("--without-delivery-links", action="store_true")
+    subparsers.add_parser("check")
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
     try:
-        result = CakeDoctor().check(
-            check_delivery_links=not args.without_delivery_links
-        )
+        result = CakeDoctor().check()
         emit(result)
         return 0
     except CakeError as exc:

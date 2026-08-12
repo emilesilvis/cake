@@ -331,7 +331,13 @@ class GitHubAdapter:
         return result
 
     def slices(self, repository: str, query: str = "") -> list[dict[str, Any]]:
-        return self.issues(repository, state="open", query=query)
+        """Return every canonical Cake Slice issue, including terminal history."""
+
+        return [
+            issue
+            for issue in self.issues(repository, state="all", query=query)
+            if issue.get("cake") and issue.get("outcome") and issue.get("success")
+        ]
 
     def similar_issues(self, repository: str, *, title: str, body: str) -> list[dict[str, Any]]:
         """Find likely duplicate issues across the repository, regardless of Slice labels."""
@@ -363,6 +369,29 @@ class GitHubAdapter:
             args.extend(["--label", label])
         url = self._run(args)
         return self.issue(url.splitlines()[-1])
+
+    def ensure_label(
+        self,
+        repository: str,
+        name: str,
+        *,
+        color: str = "d4a72c",
+        description: str = "Canonical Cake Slice",
+    ) -> None:
+        self._run(
+            [
+                "label",
+                "create",
+                name,
+                "--repo",
+                repository,
+                "--color",
+                color,
+                "--description",
+                description,
+                "--force",
+            ]
+        )
 
     def update_issue(self, reference: str, *, title: str, body: str) -> dict[str, Any]:
         repository, number = github_issue_parts(reference)

@@ -9,20 +9,36 @@ import re
 from typing import Any, Iterable
 
 
-CAKE_FIELDS = ("Direction", "Finished when", "Current slices", "Next slice")
+CAKE_FIELDS = (
+    "Direction",
+    "Finished when",
+    "Repository",
+    "Slice index",
+    "Current slices",
+    "Next slice",
+)
 SLICE_FIELDS = (
     "Cake",
     "Outcome",
     "Success",
     "Not included",
+    "Plate",
+    # Read the old field so a migration can identify it. New Slice records do
+    # not write delivery links: a GitHub issue is itself canonical when the
+    # parent Cake declares a repository.
     "GitHub issue",
     "Disposition",
     "Reason",
 )
+PLATE_PROJECTION_FIELDS = ("Slice", "Cake", "Disposition")
 TERMINAL_SLICE_DISPOSITIONS = {"finished", "abandoned"}
 TERMINAL_CANONICAL_STATES = {"finished", "abandoned", "closed"}
 SLICE_DISPOSITIONS = {"candidate", "current", "paused", *TERMINAL_SLICE_DISPOSITIONS}
 CAKE_STATES = {"pantry", "on_stand", "parked", "finished"}
+
+_CONTRACT_FIELD_LINE = re.compile(
+    r"^(?:\*\*(?P<markdown>[^:\n*]+):\*\*|(?P<plain>[^:\n]+):)\s*(?P<value>.*)$"
+)
 
 
 class CakeError(RuntimeError):
@@ -60,6 +76,26 @@ def trello_card_url(value: str) -> str:
     return f"https://trello.com/c/{short_link}"
 
 
+def github_repository_name(value: str | None) -> str | None:
+    """Return ``owner/repository`` from a supported GitHub repository reference."""
+
+    if not value:
+        return None
+    match = re.fullmatch(
+        r"(?:https://github\.com/)?([^/\s]+/[^/\s#?]+?)(?:\.git)?/?",
+        value.strip(),
+        flags=re.IGNORECASE,
+    )
+    return match.group(1) if match else None
+
+
+def github_repository_url(value: str) -> str:
+    repository = github_repository_name(value)
+    if not repository:
+        raise CakeError("A Cake Repository must be a GitHub repository URL or owner/repository")
+    return f"https://github.com/{repository}"
+
+
 def canonical_ref(value: str | None) -> str | None:
     """Normalize an opaque ID or URL enough for stable equality checks."""
 
@@ -79,18 +115,27 @@ def token_for(payload: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()[:20]
 
 
+def parse_contract_field_line(line: str) -> tuple[str, str] | None:
+    """Read a plain or Trello Markdown contract field line."""
+
+    match = _CONTRACT_FIELD_LINE.match(line)
+    if not match:
+        return None
+    return (match.group("markdown") or match.group("plain"), match.group("value"))
+
+
 def _parse_fields(text: str, allowed: Iterable[str]) -> dict[str, str]:
     allowed_by_normalized = {normalize(field): field for field in allowed}
     result: dict[str, str] = {}
     current: str | None = None
     for raw_line in text.splitlines():
-        match = re.match(r"^([^:\n]+):\s*(.*)$", raw_line)
-        normalized = normalize(match.group(1)) if match else ""
-        if match and normalized in allowed_by_normalized:
+        parsed = parse_contract_field_line(raw_line)
+        normalized = normalize(parsed[0]) if parsed else ""
+        if parsed and normalized in allowed_by_normalized:
             current = allowed_by_normalized[normalized]
-            result[current] = match.group(2).strip()
+            result[current] = parsed[1].strip()
             continue
-        if match:
+        if parsed:
             if current and raw_line.lstrip().startswith("- "):
                 result[current] = f"{result[current]}\n{raw_line.rstrip()}".strip()
                 continue
@@ -101,9 +146,16 @@ def _parse_fields(text: str, allowed: Iterable[str]) -> dict[str, str]:
     return result
 
 
-def _format_fields(values: Iterable[tuple[str, str | None]]) -> str:
-    lines = [f"{field}: {value.strip()}" for field, value in values if value and value.strip()]
-    return "\n".join(lines)
+def _format_fields(
+    values: Iterable[tuple[str, str | None]], *, trello_markdown: bool = False
+) -> str:
+    fields = [
+        f"{'**' if trello_markdown else ''}{field}:{'**' if trello_markdown else ''} "
+        f"{value.strip()}"
+        for field, value in values
+        if value and value.strip()
+    ]
+    return ("\n\n" if trello_markdown else "\n").join(fields)
 
 
 def _parse_reference_list(value: str | None) -> list[str]:
@@ -116,11 +168,19 @@ def _parse_reference_list(value: str | None) -> list[str]:
     ]
 
 
-def _format_reference_list(values: Iterable[str]) -> str | None:
+def _canonical_slice_url(value: str) -> str:
+    if is_trello_card_url(value):
+        return trello_card_url(value)
+    if is_github_issue_url(value):
+        return value.strip().rstrip("/")
+    raise CakeError("A Slice reference must be a Trello card URL or GitHub issue URL")
+
+
+def _format_reference_list(values: Iterable[str], *, plate_only: bool = False) -> str | None:
     canonical: list[str] = []
     seen: set[str] = set()
     for value in values:
-        reference = trello_card_url(value)
+        reference = trello_card_url(value) if plate_only else _canonical_slice_url(value)
         key = canonical_ref(reference)
         if key not in seen:
             canonical.append(reference)
@@ -136,6 +196,8 @@ def parse_cake_contract(text: str) -> dict[str, Any]:
     return {
         "direction": fields.get("Direction") or None,
         "finished_when": fields.get("Finished when") or None,
+        "repository": fields.get("Repository") or None,
+        "slice_index": _parse_reference_list(fields.get("Slice index")),
         "current_slice_links": _parse_reference_list(fields.get("Current slices")),
         "next_slice": fields.get("Next slice") or None,
     }
@@ -146,20 +208,29 @@ def format_cake_contract(
     next_slice: str | None = None,
     finished_when: str | None = None,
     current_slices: Iterable[str] | None = None,
+    repository: str | None = None,
+    slice_index: Iterable[str] | None = None,
+    *,
+    trello_markdown: bool = False,
 ) -> str:
     if not direction.strip():
         raise CakeError("A mature Cake needs a Direction")
-    current_slice_links = _format_reference_list(current_slices or [])
-    canonical_next = trello_card_url(next_slice) if next_slice else None
+    current_slice_links = _format_reference_list(current_slices or [], plate_only=True)
+    canonical_index = _format_reference_list(slice_index or [])
+    canonical_repository = github_repository_url(repository) if repository else None
+    canonical_next = _canonical_slice_url(next_slice) if next_slice else None
     if current_slice_links and canonical_next:
         raise CakeError("A Cake cannot have Current slices and a Next slice at the same time")
     return _format_fields(
         (
             ("Direction", direction),
             ("Finished when", finished_when),
+            ("Repository", canonical_repository),
+            ("Slice index", canonical_index),
             ("Current slices", current_slice_links),
             ("Next slice", canonical_next),
-        )
+        ),
+        trello_markdown=trello_markdown,
     )
 
 
@@ -171,6 +242,7 @@ def parse_slice_contract(text: str) -> dict[str, str | None]:
         "outcome": fields.get("Outcome") or None,
         "success": fields.get("Success") or None,
         "not_included": fields.get("Not included") or None,
+        "plate": fields.get("Plate") or None,
         "github_issue": fields.get("GitHub issue") or None,
         "disposition": disposition,
         "reason": fields.get("Reason") or None,
@@ -196,7 +268,10 @@ def format_slice_contract(
     not_included: str | None = None,
     disposition: str = "candidate",
     reason: str | None = None,
+    plate: str | None = None,
     github_issue: str | None = None,
+    *,
+    trello_markdown: bool = False,
 ) -> str:
     canonical_cake = trello_card_url(cake)
     if not outcome.strip():
@@ -210,22 +285,62 @@ def format_slice_contract(
         raise CakeError("An Abandoned Slice needs a reason")
     if github_issue and not is_github_issue_url(github_issue):
         raise CakeError("A Slice's GitHub issue must be a GitHub issue URL")
+    if plate and not is_trello_card_url(plate):
+        raise CakeError("A Slice's Plate projection must be a Trello card URL")
     return _format_fields(
         (
             ("Cake", canonical_cake),
             ("Outcome", outcome),
             ("Success", success),
             ("Not included", not_included),
+            ("Plate", trello_card_url(plate) if plate else None),
             ("GitHub issue", github_issue),
             ("Disposition", normalized_disposition.title()),
             ("Reason", reason),
-        )
+        ),
+        trello_markdown=trello_markdown,
+    )
+
+
+def parse_plate_projection_contract(text: str) -> dict[str, str | None]:
+    fields = _parse_fields(text, PLATE_PROJECTION_FIELDS)
+    return {
+        "slice": fields.get("Slice") or None,
+        "cake": fields.get("Cake") or None,
+        "disposition": normalize(fields.get("Disposition", "current")) or "current",
+    }
+
+
+def format_plate_projection_contract(
+    slice_reference: str,
+    cake: str,
+    *,
+    disposition: str = "current",
+    trello_markdown: bool = False,
+) -> str:
+    if not is_github_issue_url(slice_reference):
+        raise CakeError("A Plate projection must point to a GitHub issue Slice")
+    normalized_disposition = normalize(disposition)
+    if normalized_disposition not in {"current", "migrated"}:
+        raise CakeError("A Plate projection disposition must be Current or Migrated")
+    return _format_fields(
+        (
+            ("Slice", _canonical_slice_url(slice_reference)),
+            ("Cake", trello_card_url(cake)),
+            ("Disposition", normalized_disposition.title()),
+        ),
+        trello_markdown=trello_markdown,
     )
 
 
 def _record_matches(record: dict[str, Any], reference: str) -> bool:
     expected = canonical_ref(reference)
-    candidates = (record.get("id"), record.get("url"), record.get("slice"))
+    candidates = (
+        record.get("id"),
+        record.get("url"),
+        record.get("slice"),
+        record.get("plate_card"),
+    )
     return expected is not None and expected in {canonical_ref(value) for value in candidates}
 
 
@@ -262,6 +377,31 @@ def _current_key(record: dict[str, Any]) -> str | None:
     return canonical_ref(record.get("slice") or record.get("url") or record.get("id"))
 
 
+def _slice_record_url(record: dict[str, Any]) -> str:
+    value = record.get("url") or record.get("id")
+    if not isinstance(value, str) or not value.strip():
+        raise CakeError("A canonical Slice record needs a stable URL")
+    return _canonical_slice_url(value)
+
+
+def _plate_reference(record: dict[str, Any]) -> str | None:
+    value = record.get("plate_card")
+    if isinstance(value, str) and value.strip():
+        return trello_card_url(value) if is_trello_card_url(value) else value
+    if record.get("adapter") == "plate":
+        value = record.get("url") or record.get("id")
+        if isinstance(value, str) and is_trello_card_url(value):
+            return trello_card_url(value)
+    value = record.get("id")
+    if isinstance(value, str) and value.startswith("planned:plate-projection:"):
+        return value
+    return None
+
+
+def _slice_provider(cake: dict[str, Any]) -> str:
+    return "github" if github_repository_name(cake.get("repository")) else "plate"
+
+
 def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Return structural errors and external-drift warnings without mutating state."""
 
@@ -273,11 +413,28 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
     catalog = _slice_records(snapshot)
 
     current_by_cake: dict[str, list[dict[str, Any]]] = {}
+    current_by_slice: dict[str, list[dict[str, Any]]] = {}
     current_keys: set[str] = set()
     for current in plate:
+        plate_reference = _plate_reference(current)
+        if not plate_reference or (
+            not is_trello_card_url(plate_reference)
+            and not plate_reference.startswith("planned:plate-projection:")
+        ):
+            errors.append(
+                {
+                    "code": "invalid_plate_projection",
+                    "slice": current.get("slice") or current.get("url") or current.get("id"),
+                }
+            )
         cake_ref = current.get("cake")
         if not cake_ref:
-            errors.append({"code": "orphan_slice", "slice": current.get("url") or current.get("id")})
+            errors.append(
+                {
+                    "code": "orphan_slice",
+                    "slice": current.get("slice") or current.get("url") or current.get("id"),
+                }
+            )
             continue
         parent_matches = [cake for cake in on_stand if _record_matches(cake, cake_ref)]
         if len(parent_matches) != 1:
@@ -297,6 +454,36 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
             errors.append({"code": "duplicate_plate_slice", "slice": key})
         elif key:
             current_keys.add(key)
+        if key:
+            current_by_slice.setdefault(key, []).append(current)
+
+        canonical_matches = [item for item in catalog if key and _record_matches(item, key)]
+        if len(canonical_matches) != 1:
+            errors.append(
+                {
+                    "code": "projection_missing_canonical_slice",
+                    "slice": current.get("slice") or current.get("url") or current.get("id"),
+                }
+            )
+        elif canonical_matches[0].get("adapter") == "github":
+            backlink = canonical_matches[0].get("plate")
+            if canonical_ref(backlink) != canonical_ref(plate_reference):
+                errors.append(
+                    {
+                        "code": "plate_projection_link_drift",
+                        "slice": canonical_matches[0].get("url") or canonical_matches[0].get("id"),
+                        "actual": backlink,
+                        "expected": plate_reference,
+                    }
+                )
+        elif canonical_ref(canonical_matches[0].get("url")) != canonical_ref(plate_reference):
+            errors.append(
+                {
+                    "code": "trello_slice_projection_drift",
+                    "slice": canonical_matches[0].get("url") or canonical_matches[0].get("id"),
+                    "plate": plate_reference,
+                }
+            )
 
         if current.get("canonical_state") in TERMINAL_CANONICAL_STATES:
             warnings.append(
@@ -307,6 +494,52 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
                 }
             )
 
+    for cake in cakes:
+        cake_reference = cake.get("url") or cake.get("id")
+        repository = cake.get("repository")
+        if repository and not github_repository_name(repository):
+            errors.append(
+                {"code": "invalid_cake_repository", "cake": cake_reference, "repository": repository}
+            )
+
+        expected_provider = _slice_provider(cake)
+        expected_index: list[str] = []
+        for record in catalog:
+            if (
+                record.get("cake")
+                and _record_matches(cake, record["cake"])
+                and record.get("adapter") == expected_provider
+            ):
+                try:
+                    expected_index.append(_slice_record_url(record))
+                except CakeError:
+                    continue
+        stored_index = list(cake.get("slice_index") or [])
+        invalid_index_links = [
+            reference
+            for reference in stored_index
+            if not (is_trello_card_url(reference) or is_github_issue_url(reference))
+        ]
+        if invalid_index_links:
+            errors.append(
+                {
+                    "code": "invalid_slice_index_links",
+                    "cake": cake_reference,
+                    "slices": invalid_index_links,
+                }
+            )
+        actual_keys = [canonical_ref(value) for value in stored_index]
+        expected_keys = [canonical_ref(value) for value in expected_index]
+        if len(actual_keys) != len(set(actual_keys)) or set(actual_keys) != set(expected_keys):
+            warnings.append(
+                {
+                    "code": "slice_index_drift",
+                    "cake": cake_reference,
+                    "actual": stored_index,
+                    "expected": sorted(expected_index, key=normalize),
+                }
+            )
+
     for cake in on_stand:
         cake_key = canonical_ref(cake.get("url") or cake.get("id"))
         current = current_by_cake.get(cake_key or "", [])
@@ -314,11 +547,8 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
         stored_current = list(cake.get("current_slice_links") or [])
         expected_current: list[str] = []
         for current_slice in current:
-            try:
-                expected_current.append(
-                    trello_card_url(current_slice.get("slice") or current_slice.get("url"))
-                )
-            except (CakeError, TypeError):
+            plate_reference = _plate_reference(current_slice)
+            if not plate_reference:
                 errors.append(
                     {
                         "code": "invalid_current_slice_url",
@@ -326,8 +556,11 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
                         "slice": current_slice.get("slice") or current_slice.get("url"),
                     }
                 )
+            else:
+                expected_current.append(plate_reference)
         invalid_current_links = [
             reference for reference in stored_current if not is_trello_card_url(reference)
+            and not reference.startswith("planned:plate-projection:")
         ]
         if invalid_current_links:
             errors.append(
@@ -353,7 +586,7 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
         if not current and not next_slice:
             errors.append({"code": "waiting_without_next_slice", "cake": cake.get("url") or cake.get("id")})
         if not current and next_slice:
-            if not is_trello_card_url(next_slice):
+            if not (is_trello_card_url(next_slice) or is_github_issue_url(next_slice)):
                 errors.append(
                     {
                         "code": "invalid_next_slice_link",
@@ -366,7 +599,7 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
             if valid_next:
                 candidate = matching_next[0]
                 valid_next = (
-                    candidate.get("adapter") == "plate"
+                    candidate.get("adapter") == _slice_provider(cake)
                     and bool(candidate.get("cake"))
                     and _record_matches(cake, candidate["cake"])
                     and bool(candidate.get("outcome"))
@@ -388,13 +621,6 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
             errors.append({"code": "next_slice_is_current", "cake": cake.get("url") or cake.get("id")})
 
     for slice_record in catalog:
-        if slice_record.get("adapter") != "plate":
-            errors.append(
-                {
-                    "code": "slice_outside_plate",
-                    "slice": slice_record.get("url") or slice_record.get("id"),
-                }
-            )
         missing = [field for field in ("cake", "outcome", "success") if not slice_record.get(field)]
         if missing:
             errors.append(
@@ -422,13 +648,49 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
                     "cake": slice_record["cake"],
                 }
             )
-        github_issue = slice_record.get("github_issue")
-        if github_issue and not is_github_issue_url(github_issue):
-            errors.append(
-                {
-                    "code": "invalid_github_issue",
+        else:
+            parent = parent_matches[0]
+            expected_provider = _slice_provider(parent)
+            actual_provider = slice_record.get("adapter")
+            if actual_provider != expected_provider:
+                finding = {
+                    "code": "slice_registry_mismatch",
                     "slice": slice_record.get("url") or slice_record.get("id"),
-                    "github_issue": github_issue,
+                    "cake": parent.get("url") or parent.get("id"),
+                    "actual": actual_provider,
+                    "expected": expected_provider,
+                }
+                if normalize(slice_record.get("disposition", "candidate")) in TERMINAL_SLICE_DISPOSITIONS:
+                    warnings.append(finding)
+                else:
+                    errors.append(finding)
+
+        adapter = slice_record.get("adapter")
+        reference = slice_record.get("url") or slice_record.get("id")
+        if adapter == "github" and not is_github_issue_url(reference):
+            errors.append({"code": "invalid_github_slice_url", "slice": reference})
+        if adapter == "plate" and not is_trello_card_url(reference):
+            errors.append({"code": "invalid_trello_slice_url", "slice": reference})
+        projection = slice_record.get("plate")
+        if projection and not (
+            is_trello_card_url(projection)
+            or str(projection).startswith("planned:plate-projection:")
+        ):
+            errors.append(
+                {"code": "invalid_plate_projection_link", "slice": reference, "plate": projection}
+            )
+        key = canonical_ref(reference)
+        is_current = bool(key and current_by_slice.get(key))
+        if adapter == "github" and projection and not is_current:
+            errors.append(
+                {"code": "stale_plate_projection_link", "slice": reference, "plate": projection}
+            )
+        if slice_record.get("github_issue"):
+            warnings.append(
+                {
+                    "code": "legacy_delivery_link",
+                    "slice": reference,
+                    "github_issue": slice_record.get("github_issue"),
                 }
             )
 
@@ -460,8 +722,8 @@ def _candidate_for(snapshot: dict[str, Any], cake: dict[str, Any], reference: st
         raise CakeError("The nominated Slice does not belong to this Cake")
     if not candidate.get("outcome") or not candidate.get("success"):
         raise CakeError("The nominated Slice does not satisfy the Slice contract")
-    if candidate.get("adapter") != "plate":
-        raise CakeError("Every canonical Slice must be a Plate card")
+    if candidate.get("adapter") != _slice_provider(cake):
+        raise CakeError("The nominated Slice is not in its Cake's canonical registry")
     if normalize(candidate.get("disposition", "candidate")) in TERMINAL_SLICE_DISPOSITIONS:
         raise CakeError("A Finished or Abandoned Slice cannot be nominated")
     return candidate
@@ -534,7 +796,7 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
         candidate_reference = canonical_ref(candidate.get("url") or candidate.get("id"))
         if any(_current_key(current) == candidate_reference for current in plate):
             raise CakeError("A current Slice cannot also be Next Slice")
-        cake["next_slice"] = trello_card_url(candidate.get("url") or candidate.get("id"))
+        cake["next_slice"] = _slice_record_url(candidate)
         return
 
     if action == "pull":
@@ -542,27 +804,34 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
         if not cake.get("next_slice"):
             raise CakeError("Only a Cake's nominated Next Slice can be pulled")
         candidate = _candidate_for(snapshot, cake, cake["next_slice"])
-        candidate_ref = trello_card_url(candidate.get("url") or candidate.get("id"))
+        candidate_ref = _slice_record_url(candidate)
         if any(_current_key(current) == canonical_ref(candidate_ref) for current in plate):
             raise CakeError("The nominated Slice is already on Plate")
         lane = normalize(operation.get("lane", "eating")).replace(" ", "_")
         if lane not in {"eating", "blocked"}:
             raise CakeError("A pulled Slice must enter Eating or Blocked")
+        plate_reference = (
+            trello_card_url(candidate_ref)
+            if candidate.get("adapter") == "plate"
+            else f"planned:plate-projection:{index}"
+        )
         current = {
             **deepcopy(candidate),
-            "id": f"planned:{index}",
-            "plate_card": None,
+            "id": plate_reference,
+            "plate_card": plate_reference,
             "cake": trello_card_url(cake.get("url") or cake.get("id")),
             "slice": candidate_ref,
             "lane": lane,
-            "canonical_on_plate": True,
             "disposition": "current",
         }
+        if candidate.get("adapter") == "github":
+            current["plate"] = plate_reference
+            candidate["plate"] = plate_reference
         snapshot.setdefault("plate", {}).setdefault(lane, []).append(current)
         candidate["disposition"] = "current"
         cake["current_slice_links"] = [
             *(cake.get("current_slice_links") or []),
-            candidate_ref,
+            plate_reference,
         ]
         cake["next_slice"] = None
         return
@@ -585,11 +854,19 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
         if matching:
             matching[0]["disposition"] = disposition
             matching[0]["reason"] = reason
+            if matching[0].get("adapter") == "github":
+                matching[0]["plate"] = None
+                matching[0]["canonical_state"] = (
+                    "closed" if disposition in TERMINAL_SLICE_DISPOSITIONS else "open"
+                )
+            elif disposition in TERMINAL_SLICE_DISPOSITIONS:
+                matching[0]["canonical_state"] = "archived"
         parent = _find(cakes, current["cake"], "parent Cake")
         remaining = [item for item in _plate_records(snapshot) if _record_matches(parent, item.get("cake", ""))]
         parent["current_slice_links"] = [
-            trello_card_url(item.get("slice") or item.get("url") or item.get("id"))
+            _plate_reference(item)
             for item in remaining
+            if _plate_reference(item)
         ]
         if remaining:
             if operation.get("next_slice") or operation.get("cake_state"):
@@ -599,7 +876,7 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
             if parent.get("state") != "on_stand":
                 raise CakeError("Only a Cake on the Cake Stand can receive a Next Slice")
             candidate = _candidate_for(snapshot, parent, operation["next_slice"])
-            parent["next_slice"] = trello_card_url(candidate.get("url") or candidate.get("id"))
+            parent["next_slice"] = _slice_record_url(candidate)
             return
         target = operation.get("cake_state")
         if target not in {"parked", "finished"}:
@@ -631,7 +908,7 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
                 cake[field] = operation[field] or None
         if "next_slice" in operation:
             candidate = _candidate_for(snapshot, cake, operation["next_slice"])
-            cake["next_slice"] = trello_card_url(candidate.get("url") or candidate.get("id"))
+            cake["next_slice"] = _slice_record_url(candidate)
         if target == "on_stand":
             if not cake.get("direction"):
                 raise CakeError("A Cake needs a Direction before promotion")
@@ -641,8 +918,9 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
                 raise CakeError("A Cake with a current Slice cannot also receive a Next Slice")
             if current:
                 cake["current_slice_links"] = [
-                    trello_card_url(item.get("slice") or item.get("url") or item.get("id"))
+                    _plate_reference(item)
                     for item in current
+                    if _plate_reference(item)
                 ]
                 cake["next_slice"] = None
             if cake.get("next_slice"):
@@ -965,6 +1243,8 @@ def _transition_source_projection(
                     "state",
                     "direction",
                     "finished_when",
+                    "repository",
+                    "slice_index",
                     "current_slice_links",
                     "next_slice",
                     "position",
@@ -987,7 +1267,7 @@ def _transition_source_projection(
                     "outcome",
                     "success",
                     "not_included",
-                    "github_issue",
+                    "plate",
                 ),
             )
             for _, record in sorted(selected_plate.items())
@@ -1003,7 +1283,7 @@ def _transition_source_projection(
                     "outcome",
                     "success",
                     "not_included",
-                    "github_issue",
+                    "plate",
                     "disposition",
                     "canonical_state",
                     "adapter",
