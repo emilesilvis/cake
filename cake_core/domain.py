@@ -245,6 +245,7 @@ def _cake_records(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         *stand.get("on_stand", []),
         *stand.get("parked", []),
         *stand.get("finished", []),
+        *snapshot.get("archived_cakes", []),
     ]
 
 
@@ -488,6 +489,7 @@ def _validate_operation(operation: dict[str, Any]) -> None:
             },
             {"action", "cake", "to"},
         ),
+        "archive_cake": ({"action", "cake"}, {"action", "cake"}),
         "reorder": (
             {"action", "collection", "record", "position"},
             {"action", "collection", "record", "position"},
@@ -643,6 +645,17 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
             cake["next_slice"] = None
         return
 
+    if action == "archive_cake":
+        parked = snapshot.get("cake_stand", {}).get("parked", [])
+        cake = _find(parked, operation["cake"], "Parked Cake")
+        if any(_record_matches(cake, item.get("cake", "")) for item in plate):
+            raise CakeError("A Cake with a current Slice cannot be archived")
+        parked.remove(cake)
+        cake["former_state"] = "parked"
+        cake["state"] = "archived"
+        snapshot.setdefault("archived_cakes", []).append(cake)
+        return
+
     if action == "reorder":
         collection_name = operation.get("collection")
         collections = {
@@ -751,7 +764,7 @@ def _relevant_source_failures(
     references = _operation_references(snapshot, operations)
     source_dependent_cakes: set[str] = set()
     for operation in operations:
-        if operation.get("action") in {"nominate", "pull"} or (
+        if operation.get("action") in {"nominate", "pull", "archive_cake"} or (
             operation.get("action") == "move_cake"
             and normalize(operation.get("to", "")).replace(" ", "_") == "on_stand"
         ):
@@ -778,7 +791,7 @@ def _relevant_source_failures(
             continue
         relevance = health.get("relevance")
         if relevance == "plate_membership" and any(
-            operation.get("action") in {"nominate", "pull", "exit"}
+            operation.get("action") in {"nominate", "pull", "exit", "archive_cake"}
             or (
                 operation.get("action") == "reorder"
                 and operation.get("collection") in {"eating", "blocked"}
@@ -788,7 +801,7 @@ def _relevant_source_failures(
             failures.append(health)
             continue
         if relevance == "cake_stand_membership" and any(
-            operation.get("action") in {"nominate", "pull", "move_cake"}
+            operation.get("action") in {"nominate", "pull", "move_cake", "archive_cake"}
             or (
                 operation.get("action") == "reorder"
                 and operation.get("collection") == "on_stand"
@@ -868,7 +881,6 @@ def _transition_source_projection(
     def add_plate_for_cake(cake_record: dict[str, Any] | None) -> None:
         if not cake_record:
             return
-        cake_reference = cake_record.get("url") or cake_record.get("id")
         for record in plate:
             if record.get("cake") and _record_matches(cake_record, record["cake"]):
                 add_plate(record.get("url") or record.get("id"))
@@ -895,6 +907,10 @@ def _transition_source_projection(
             add_plate_for_cake(cake_record)
             add_slice(operation.get("next_slice"))
             include_capacity = True
+        elif action == "archive_cake":
+            cake_record = add_cake(operation.get("cake"))
+            add_plate_for_cake(cake_record)
+            include_plate_membership = True
         elif action == "reorder":
             collection_name = operation.get("collection")
             collection = {

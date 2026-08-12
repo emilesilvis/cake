@@ -17,14 +17,16 @@ A Cake can sit on the Cake Stand without being actively eaten: it is active but 
 
 The full, deliberately small vocabulary lives in [CONTEXT.md](CONTEXT.md).
 
-## Two skills
+## Three skills
 
 - **cake-prioritise** compares the whole portfolio, recommends one focus, and manages Cake Stand, Next Slice, and Plate transitions.
 - **cake-slice** turns one chosen direction into a single independently finishable Slice with observable success.
+- **cake-doctor** checks the Trello system without changing it, explains inconsistencies in human terms, and routes repairs to the responsible skill.
 
 `cake-prioritise` decides *which Slice deserves focus*. `cake-slice` defines *what finishing that Slice means*.
+`cake-doctor` checks whether the resulting system is coherent; structural health never substitutes for prioritisation.
 
-Clone the whole repository so both skills can use the shared `cake_core` module, then link or copy the two directories under `skills/` into your agent's skills directory.
+Clone the whole repository so all three skills can use the shared `cake_core` module, then link or copy the directories under `skills/` into your agent's skills directory.
 
 ## Trello topology
 
@@ -33,6 +35,8 @@ Pantry, Cake Stand, and Plate are configurable Trello boards:
 - Pantry contains only Cakes that are not yet active.
 - Cake Stand contains only Cakes, including active, parked, and finished Cakes. Its Trello board may also host a separately configured `Rhythms / capacity` list; cards there are not Cake Stand members.
 - Plate is the sole canonical Slice registry and source of truth for current work.
+
+Parked is for a still-valid Cake that may return. A superseded or misclassified Cake card may instead be archived after all of its Slices have left current Plate work. Archived Cake cards are read only to keep historical Slice parent links valid; they stay out of normal portfolio views and choices.
 
 Suggested Trello list names show their WIP limits directly:
 
@@ -91,11 +95,13 @@ Supports: The continuing benefit or Cake it supports
 
 Completing one occurrence of a Capacity Constraint does not create a Slice; it simply recurs. A bounded effort to establish or materially change the rhythm may still be a Cake with finishable Slices.
 
+Trello is intentionally the human interface. The helpers do not add health cards, audit comments, migration provenance, timestamps, UUID cross-links, or parallel status metadata. They use the visible lists, short card contracts, clickable links, and Trello's archive.
+
 All state-changing helpers preview exact transitions first and bind approval to the observed source state. WIP limits strongly discourage over-commitment, but an explicitly reviewed overage can proceed.
 
 ## Development
 
-The reusable rules and provider adapters live in `cake_core/`; the two skill scripts are thin command-line interfaces over that shared module.
+The reusable rules and provider adapters live in `cake_core/`; the skill scripts are thin command-line interfaces over that shared module.
 
 ```bash
 python3 -m unittest discover -s tests -v

@@ -30,7 +30,8 @@ Read `../../CONTEXT.md` completely before acting. Choose focus in the context of
 - A configured Capacity Constraint list may share the Cake Stand Trello board, but its cards are not Cake Stand members and do not consume Cake Stand or Plate WIP. Always include their load when judging what fits.
 - A Slice may link to a GitHub delivery issue, but Trello remains canonical. If present, the Trello `GitHub issue:` and GitHub `Cake Slice:` links must be reciprocal.
 - Exiting a Slice removes its Cake-side Current Slice link. When the last current Slice exits, nominate another Slice or Park/Finish the parent Cake in the same plan. A Cake cannot leave the Stand while one of its Slices remains on Plate.
-- Parked and Finished Cakes live alongside the active Cake Stand list but are not active membership. A stable habit may Finish as a Cake and continue as a capacity constraint.
+- Parked and Finished Cakes live alongside the active Cake Stand list but are not active membership. Parked is only for a still-valid Cake that may return. When a former Cake was superseded or reclassified and should no longer be a portfolio option, archive its card after every current Slice has exited; archived Cakes remain historical link targets only.
+- Keep Trello human-facing. Do not create retirement lists, migration notes, audit comments, UUID links, origin fields, or status metadata. Use normal Cake and Slice contracts, Capacity Constraint fields, clickable links, and Trello's own archive.
 - Limits strongly discourage overage and require explicit review; they do not mechanically block it.
 
 ## Decision output
@@ -71,8 +72,9 @@ Operations are:
 - `{"action":"pull","cake":"<ref>","lane":"eating|blocked"}`
 - `{"action":"exit","plate_slice":"<ref>","disposition":"finished|paused|abandoned","reason":"<required for abandoned>","next_slice":"<ref>"}` or use `"cake_state":"parked|finished"`
 - `{"action":"move_cake","cake":"<ref>","to":"on_stand|parked|finished",...Cake contract fields}`
+- `{"action":"archive_cake","cake":"<ref>"}` for a Parked Cake that is no longer a valid portfolio option
 - `{"action":"reorder","collection":"on_stand|eating|blocked","record":"<ref>","position":0}`
 
 Use `cake-slice` for canonical Slice writes. Use this helper—not direct Trello edits—for membership, nomination, exits, and order.
 
-When correcting a recurrence-only Slice, preview an `exit` with disposition `abandoned` and a precise reclassification reason. Park its parent unless the Cake has genuinely Finished or already has another valid outcome Slice. Preview the persistent Capacity Constraint card separately before writing it.
+When correcting a recurrence-only Slice, preview an `exit` with disposition `abandoned` and a precise reclassification reason. Move its parent to Parked while the replacement is being established unless the Cake genuinely Finished or has another valid outcome Slice. Preview the persistent Capacity Constraint card separately before writing it. Once the replacement is healthy and the former Cake is no longer a valid option, preview `archive_cake`; do not leave a relic in Parked merely to preserve history.

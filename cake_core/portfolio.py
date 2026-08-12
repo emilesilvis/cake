@@ -207,7 +207,11 @@ class CakePortfolio:
         plate_board, plate_lists = self._trello_role("plate")
 
         pantry_cards = sorted(self.trello.cards(pantry_board), key=lambda card: card.get("pos", 0))
-        stand_cards = sorted(self.trello.cards(stand_board), key=lambda card: card.get("pos", 0))
+        all_stand_cards = sorted(
+            self.trello.cards(stand_board, include_archived=True),
+            key=lambda card: card.get("pos", 0),
+        )
+        stand_cards = [card for card in all_stand_cards if not card.get("closed")]
         visible_plate_cards = sorted(
             self.trello.cards(plate_board), key=lambda card: card.get("pos", 0)
         )
@@ -226,6 +230,7 @@ class CakePortfolio:
             "priority_needs_confirmation": True,
             "pantry": [_cake_from_card(card, "pantry") for card in pantry_cards],
             "cake_stand": {"on_stand": [], "parked": [], "finished": []},
+            "archived_cakes": [],
             "plate": {"eating": [], "blocked": []},
             "slice_catalog": [],
             "capacity_constraints": capacity_constraints,
@@ -233,13 +238,42 @@ class CakePortfolio:
             "source_health": capacity_health,
             "unexpected_records": [],
             "sources": {
-                "pantry": {"id": pantry_board["id"], "name": pantry_board["name"], "url": pantry_board.get("url")},
-                "cake_stand": {"id": stand_board["id"], "name": stand_board["name"], "url": stand_board.get("url")},
-                "plate": {"id": plate_board["id"], "name": plate_board["name"], "url": plate_board.get("url")},
+                "pantry": {
+                    "id": pantry_board["id"],
+                    "name": pantry_board["name"],
+                    "url": pantry_board.get("url"),
+                },
+                "cake_stand": {
+                    "id": stand_board["id"],
+                    "name": stand_board["name"],
+                    "url": stand_board.get("url"),
+                    "lists": {
+                        state: {"id": item["id"], "name": item.get("name")}
+                        for state, item in stand_lists.items()
+                    },
+                },
+                "plate": {
+                    "id": plate_board["id"],
+                    "name": plate_board["name"],
+                    "url": plate_board.get("url"),
+                    "lists": {
+                        lane: {"id": item["id"], "name": item.get("name")}
+                        for lane, item in plate_lists.items()
+                    },
+                },
             },
         }
 
         stand_state_by_list = {item["id"]: state for state, item in stand_lists.items()}
+        for card in all_stand_cards:
+            if not card.get("closed") or is_capacity_card(card):
+                continue
+            former_state = stand_state_by_list.get(card.get("idList"))
+            if former_state in {"on_stand", "parked", "finished"}:
+                archived = _cake_from_card(card, "archived")
+                archived["former_state"] = former_state
+                snapshot["archived_cakes"].append(archived)
+
         for card in stand_cards:
             if is_capacity_card(card):
                 continue
@@ -509,6 +543,20 @@ class CakePortfolio:
         if action == "move_cake":
             cake = self._cake_record(snapshot, operation["cake"])
             self._move_cake_card(cake, operation["to"], operation)
+            return
+
+        if action == "archive_cake":
+            cake = self._cake_record(snapshot, operation["cake"])
+            if cake.get("state") != "parked":
+                raise CakeError("Only a Parked Cake can be archived")
+            current = [
+                item
+                for item in (*snapshot["plate"]["eating"], *snapshot["plate"]["blocked"])
+                if _record_matches(cake, item.get("cake"))
+            ]
+            if current:
+                raise CakeError("A Cake with a current Slice cannot be archived")
+            self.trello.update_card(cake["id"], closed=True)
             return
 
         if action == "reorder":

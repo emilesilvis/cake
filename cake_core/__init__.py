@@ -1,5 +1,6 @@
 """Shared Cake domain and portfolio interface."""
 
+from .doctor import CakeDoctor
 from .domain import (
     CakeError,
     canonical_ref,
@@ -19,6 +20,7 @@ from .portfolio import CakePortfolio
 from .slicing import CakeSlicer
 
 __all__ = [
+    "CakeDoctor",
     "CakeError",
     "CakePortfolio",
     "CakeSlicer",

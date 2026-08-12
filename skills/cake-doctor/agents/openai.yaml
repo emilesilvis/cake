@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cake Doctor"
+  short_description: "Check whether the Trello Cake system is healthy"
+  default_prompt: "Use $cake-doctor to check my Cake system and explain any repairs in human terms."

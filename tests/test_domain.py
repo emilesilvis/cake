@@ -156,6 +156,30 @@ class ContractTest(unittest.TestCase):
 
 
 class TransitionTest(unittest.TestCase):
+    def test_archiving_a_parked_cake_keeps_it_as_a_historical_slice_parent(self) -> None:
+        parent = cake("old-routine")
+        parent["state"] = "parked"
+        old_slice = slice_record("old-occurrence", parent, disposition="abandoned")
+        source = snapshot([], [old_slice])
+        source["cake_stand"]["parked"] = [parent]
+
+        result = preview_transition(
+            source,
+            [{"action": "archive_cake", "cake": parent["url"]}],
+        )
+
+        self.assertEqual(result["target"]["cake_stand"]["parked"], [])
+        self.assertEqual(result["target"]["archived_cakes"][0]["state"], "archived")
+        self.assertEqual(result["target_issues"]["errors"], [])
+
+    def test_only_a_parked_cake_can_be_archived(self) -> None:
+        parent = cake("active")
+        with self.assertRaisesRegex(CakeError, "No Parked Cake"):
+            preview_transition(
+                snapshot([parent], []),
+                [{"action": "archive_cake", "cake": parent["url"]}],
+            )
+
     def test_pull_uses_only_next_slice_and_clears_pointer(self) -> None:
         parent = cake("blog", next_slice="https://trello.com/c/feed")
         candidate = slice_record("feed", parent)

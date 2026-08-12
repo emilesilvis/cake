@@ -45,7 +45,7 @@ A Cake Stand Cake with no Slice on Plate and exactly one valid Next Slice.
 _Avoid_: Paused, inactive
 
 **Parked**:
-A mature Cake deliberately removed from the active portfolio without claiming that its Direction was achieved.
+A mature, still-valid Cake deliberately removed from the active portfolio while remaining available for a future return.
 _Avoid_: Pantry, Failed, Paused Slice
 
 **Finished**:

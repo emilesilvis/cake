@@ -99,6 +99,62 @@ def config():
 
 
 class PortfolioTest(unittest.TestCase):
+    def test_archived_cake_is_hidden_but_resolves_an_archived_slice_parent(self) -> None:
+        trello = FakeTrello()
+        cake_url = "https://trello.com/c/old-routine"
+        trello.board_cards["stand"] = [
+            card(
+                "old-routine",
+                "stand",
+                "parked",
+                "Old routine",
+                format_cake_contract("Maintain the former routine"),
+                closed=True,
+            )
+        ]
+        trello.board_cards["plate"] = [
+            card(
+                "old-occurrence",
+                "plate",
+                "eating",
+                "Old routine: occurrence",
+                format_slice_contract(
+                    cake_url,
+                    "One occurrence is complete",
+                    "The occurrence happened",
+                    disposition="abandoned",
+                    reason="Reclassified as recurring capacity",
+                ),
+                closed=True,
+            )
+        ]
+
+        result = CakePortfolio(config=config(), trello=trello, github=FakeGitHub()).snapshot()
+
+        self.assertEqual(result["cake_stand"]["parked"], [])
+        self.assertEqual([item["name"] for item in result["archived_cakes"]], ["Old routine"])
+        self.assertEqual(result["archived_cakes"][0]["former_state"], "parked")
+        self.assertEqual(result["issues"]["errors"], [])
+
+    def test_archive_operation_only_closes_the_human_trello_card(self) -> None:
+        trello = FakeTrello()
+        trello.board_cards["stand"] = [
+            card(
+                "old-routine",
+                "stand",
+                "parked",
+                "Old routine",
+                format_cake_contract("Maintain the former routine"),
+            )
+        ]
+        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
+
+        portfolio._execute(
+            {"action": "archive_cake", "cake": "https://trello.com/c/old-routine"}
+        )
+
+        self.assertEqual(trello.writes, [(('old-routine',), {"closed": True})])
+
     def test_configured_capacity_list_can_share_the_cake_stand_board(self) -> None:
         trello = FakeTrello()
         trello.board_cards["stand"] = [
