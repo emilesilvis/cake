@@ -11,7 +11,8 @@ Cake is a small personal portfolio system. It separates enduring things you care
 | **Pantry** | Cakes | Things that might deserve commitment one day |
 | **Cake Stand** | Cakes | Your capacity-limited active portfolio |
 | **Plate** | Slices | Every bounded outcome, current or archived |
-| **Rhythms / capacity** | Capacity Constraints | Recurring commitments that reduce available attention |
+
+**Capacity Constraints** describe recurring commitments that reduce available attention. They are planning inputs, not a fourth place or portfolio members, and do not consume Cake Stand or Plate WIP. A Trello setup may keep their cards in an auxiliary `Rhythms / capacity` list.
 
 A Cake can sit on the Cake Stand without being actively eaten: it is active but waiting, and must name one **Next Slice**. Every Slice has exactly one canonical Trello card on Plate. Open cards in `Eating` or `Blocked` are current; archived cards are candidates, paused work, or completed history. If any of a Cake's Slices is current, the Cake must be on the Stand.
 
@@ -33,14 +34,14 @@ Clone the whole repository so all three skills can use the shared `cake_core` mo
 Pantry, Cake Stand, and Plate are configurable Trello boards:
 
 - Pantry contains only Cakes that are not yet active.
-- Cake Stand contains only Cakes, including active, parked, and finished Cakes. Its Trello board may also host a separately configured `Rhythms / capacity` list; cards there are not Cake Stand members.
+- The Cake Stand board holds Cakes across `On the stand`, `Parked`, and `Finished`; only `On the stand` is active portfolio membership. The board may also host an auxiliary `Rhythms / capacity` list whose cards are planning inputs, not Cake Stand members.
 - Plate is the sole canonical Slice registry and source of truth for current work.
 
 Parked is for a still-valid Cake that may return. A superseded or misclassified Cake card may instead be archived after all of its Slices have left current Plate work. Archived Cake cards are read only to keep historical Slice parent links valid; they stay out of normal portfolio views and choices.
 
 Suggested Trello list names show their WIP limits directly:
 
-- Cake Stand board: `On the stand /3`, `Parked`, `Finished`, `Rhythms / capacity`
+- Cake Stand board: `On the stand /3`, `Parked`, `Finished`; optionally, an auxiliary `Rhythms / capacity` list
 - Plate: `Eating /2`, `Blocked`
 
 The configuration accepts stable Trello list IDs, so display names and WIP suffixes may change without breaking the tooling.
