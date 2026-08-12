@@ -212,6 +212,21 @@ class TrelloAdapter:
             {"idList": list_id, "name": name, "desc": description, "pos": position},
         )
 
+    def create_list(
+        self,
+        board_id: str,
+        *,
+        name: str,
+        position: str | float = "bottom",
+    ) -> dict[str, Any]:
+        if not name.strip():
+            raise CakeError("A Trello list needs a name")
+        return self.request(
+            "POST",
+            "/lists",
+            {"idBoard": board_id, "name": name.strip(), "pos": position},
+        )
+
     def update_card(self, card_id: str, **changes: Any) -> dict[str, Any]:
         payload_by_name = {
             "name": "name",

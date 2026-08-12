@@ -143,6 +143,64 @@ class CakePortfolio:
             named_lists[state] = self.trello.list(board, name)
         return board, named_lists
 
+    def _capacity_context(
+        self,
+    ) -> tuple[list[dict[str, Any]], set[tuple[str, str]], list[dict[str, Any]]]:
+        """Read capacity records and identify explicitly configured non-domain lists."""
+
+        constraints: list[dict[str, Any]] = []
+        memberships: set[tuple[str, str]] = set()
+        health: list[dict[str, Any]] = []
+        capacity_sources = self.config.get("portfolio", {}).get("capacity_sources", [])
+        for source in capacity_sources:
+            if not isinstance(source, dict) or source.get("adapter") != "trello":
+                health.append(
+                    {"source": source, "status": "unsupported", "relevance": "capacity"}
+                )
+                continue
+            if not isinstance(source.get("board"), str) or not source["board"].strip():
+                health.append(
+                    {
+                        "source": source,
+                        "status": "unavailable",
+                        "relevance": "capacity",
+                        "error": "capacity source needs a Trello board",
+                    }
+                )
+                continue
+            configured_lists = source.get("lists", [])
+            if not isinstance(configured_lists, list) or any(
+                not isinstance(item, str) or not item.strip() for item in configured_lists
+            ):
+                health.append(
+                    {
+                        "source": source,
+                        "status": "unavailable",
+                        "relevance": "capacity",
+                        "error": "capacity source lists must be a JSON list of Trello list references",
+                    }
+                )
+                continue
+            try:
+                board = self.trello.board(source["board"])
+                cards = self.trello.cards(board)
+                if configured_lists:
+                    lists = [self.trello.list(board, item) for item in configured_lists]
+                    allowed = {item["id"] for item in lists}
+                    memberships.update((board["id"], list_id) for list_id in allowed)
+                    cards = [card for card in cards if card.get("idList") in allowed]
+                constraints.extend(_compact_card(card) for card in cards)
+            except CakeError as exc:
+                health.append(
+                    {
+                        "source": source,
+                        "status": "unavailable",
+                        "relevance": "capacity",
+                        "error": str(exc),
+                    }
+                )
+        return constraints, memberships, health
+
     def snapshot(self, *, include_candidates: bool = True) -> dict[str, Any]:
         pantry_board, _ = self._trello_role("pantry")
         stand_board, stand_lists = self._trello_role("cake_stand")
@@ -154,6 +212,14 @@ class CakePortfolio:
             self.trello.cards(plate_board), key=lambda card: card.get("pos", 0)
         )
         all_plate_cards = self.trello.cards(plate_board, include_archived=True)
+        capacity_constraints, capacity_memberships, capacity_health = self._capacity_context()
+
+        def is_capacity_card(card: dict[str, Any]) -> bool:
+            return (card.get("idBoard"), card.get("idList")) in capacity_memberships
+
+        pantry_cards = [card for card in pantry_cards if not is_capacity_card(card)]
+        visible_plate_cards = [card for card in visible_plate_cards if not is_capacity_card(card)]
+        all_plate_cards = [card for card in all_plate_cards if not is_capacity_card(card)]
 
         snapshot: dict[str, Any] = {
             "priority": self.config.get("portfolio", {}).get("priority"),
@@ -162,9 +228,9 @@ class CakePortfolio:
             "cake_stand": {"on_stand": [], "parked": [], "finished": []},
             "plate": {"eating": [], "blocked": []},
             "slice_catalog": [],
-            "capacity_constraints": [],
+            "capacity_constraints": capacity_constraints,
             "capacity": {},
-            "source_health": [],
+            "source_health": capacity_health,
             "unexpected_records": [],
             "sources": {
                 "pantry": {"id": pantry_board["id"], "name": pantry_board["name"], "url": pantry_board.get("url")},
@@ -175,6 +241,8 @@ class CakePortfolio:
 
         stand_state_by_list = {item["id"]: state for state, item in stand_lists.items()}
         for card in stand_cards:
+            if is_capacity_card(card):
+                continue
             state = stand_state_by_list.get(card.get("idList"))
             if state not in {"on_stand", "parked", "finished"}:
                 unexpected = {
@@ -262,42 +330,6 @@ class CakePortfolio:
             cake["condition"] = (
                 "being_eaten" if cake["current_slices"] else "waiting_on_the_stand"
             )
-
-        capacity_sources = self.config.get("portfolio", {}).get("capacity_sources", [])
-        for source in capacity_sources:
-            if not isinstance(source, dict):
-                snapshot["source_health"].append(
-                    {"source": source, "status": "unsupported", "relevance": "capacity"}
-                )
-                continue
-            if source.get("adapter") != "trello":
-                snapshot["source_health"].append(
-                    {"source": source, "status": "unsupported", "relevance": "capacity"}
-                )
-                continue
-            if not isinstance(source.get("board"), str) or not source["board"].strip():
-                snapshot["source_health"].append(
-                    {
-                        "source": source,
-                        "status": "unavailable",
-                        "relevance": "capacity",
-                        "error": "capacity source needs a Trello board",
-                    }
-                )
-                continue
-            try:
-                board = self.trello.board(source["board"])
-                cards = self.trello.cards(board)
-                configured_lists = source.get("lists", [])
-                if configured_lists:
-                    lists = [self.trello.list(board, item) for item in configured_lists]
-                    allowed = {item["id"] for item in lists}
-                    cards = [card for card in cards if card.get("idList") in allowed]
-                snapshot["capacity_constraints"].extend(_compact_card(card) for card in cards)
-            except CakeError as exc:
-                snapshot["source_health"].append(
-                    {"source": source, "status": "unavailable", "relevance": "capacity", "error": str(exc)}
-                )
 
         snapshot["capacity"] = {
             "cake_stand": {

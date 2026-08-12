@@ -65,8 +65,8 @@ A Slice deliberately ended without claiming its Success condition was met, becau
 _Avoid_: Finished Slice, Paused Slice
 
 **Capacity Constraint**:
-A commitment such as an established routine, appointment, or obligation that reduces available attention without becoming a candidate Cake or Slice.
-_Avoid_: Plate Slice, Cake Stand Cake
+A recurring rhythm, appointment, or obligation that consumes attention without independently creating a lasting portfolio outcome. It can support a Cake without becoming a Cake or Slice.
+_Avoid_: Habit Cake, recurring Slice, routine Slice
 
 **Task**:
 An execution action inside a Slice. A Task does not independently occupy Pantry, Cake Stand, or Plate.

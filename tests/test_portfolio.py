@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from cake_core.domain import CakeError, format_cake_contract, format_slice_contract
 from cake_core.portfolio import CakePortfolio
+from cake_core.providers import TrelloAdapter
 
 
 class FakeTrello:
@@ -19,6 +20,7 @@ class FakeTrello:
                 "On the stand": {"id": "on", "name": "On the stand"},
                 "Parked": {"id": "parked", "name": "Parked"},
                 "Finished": {"id": "finished", "name": "Finished"},
+                "Rhythms / capacity": {"id": "capacity", "name": "Rhythms / capacity"},
             },
             "plate": {
                 "Eating": {"id": "eating", "name": "Eating"},
@@ -97,6 +99,33 @@ def config():
 
 
 class PortfolioTest(unittest.TestCase):
+    def test_configured_capacity_list_can_share_the_cake_stand_board(self) -> None:
+        trello = FakeTrello()
+        trello.board_cards["stand"] = [
+            card(
+                "gym",
+                "stand",
+                "capacity",
+                "Gym",
+                "Cadence: Twice weekly\nLoad: Two sessions per week",
+            )
+        ]
+        value = config()
+        value["portfolio"]["capacity_sources"] = [
+            {
+                "adapter": "trello",
+                "board": "Cake Stand",
+                "lists": ["Rhythms / capacity"],
+            }
+        ]
+
+        result = CakePortfolio(config=value, trello=trello, github=FakeGitHub()).snapshot()
+
+        self.assertEqual([item["name"] for item in result["capacity_constraints"]], ["Gym"])
+        self.assertEqual(result["cake_stand"]["on_stand"], [])
+        self.assertEqual(result["unexpected_records"], [])
+        self.assertEqual(result["source_health"], [])
+
     def test_plate_derives_being_eaten_from_a_canonical_slice_with_delivery_link(self) -> None:
         trello = FakeTrello()
         cake_url = "https://trello.com/c/blog"
@@ -277,6 +306,24 @@ class PortfolioTest(unittest.TestCase):
             with self.assertRaisesRegex(CakeError, "explicitly allow"):
                 portfolio.apply([{"action": "anything"}], "fresh")
         execute.assert_not_called()
+
+
+class ProviderTest(unittest.TestCase):
+    def test_create_list_uses_the_trello_list_endpoint(self) -> None:
+        adapter = TrelloAdapter()
+        with patch.object(
+            adapter,
+            "request",
+            return_value={"id": "capacity", "name": "Rhythms / capacity"},
+        ) as request:
+            result = adapter.create_list("stand", name="Rhythms / capacity")
+
+        self.assertEqual(result["id"], "capacity")
+        request.assert_called_once_with(
+            "POST",
+            "/lists",
+            {"idBoard": "stand", "name": "Rhythms / capacity", "pos": "bottom"},
+        )
 
 
 if __name__ == "__main__":

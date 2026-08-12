@@ -1,6 +1,6 @@
 ---
 name: cake-prioritise
-description: Compare viable Slices across the whole Cake portfolio, challenge current commitments, recommend the single best next focus, and safely preview/apply Cake Stand, Next Slice, or Plate transitions. Use when deciding what to eat next, reviewing active work, nominating a Next Slice, entering or exiting Plate, or resolving WIP overage. Delegate canonical Slice shaping to cake-slice.
+description: Compare viable Slices across the whole Cake portfolio, challenge current commitments, distinguish recurring Capacity Constraints from Cakes and Slices, recommend the single best next focus, and safely preview/apply Cake Stand, Next Slice, or Plate transitions. Use when deciding what to eat next, reviewing active work, classifying habits or routines, nominating a Next Slice, entering or exiting Plate, or resolving WIP overage. Delegate canonical Slice shaping to cake-slice.
 ---
 
 # Cake Prioritise
@@ -26,6 +26,8 @@ Read `../../CONTEXT.md` completely before acting. Choose focus in the context of
 - Every Slice has a reciprocal `Cake:` link to its parent in the same stable Trello URL form. Never store a Cake or Slice UUID as a cross-link. Every membership transition must update both sides before it is complete.
 - Only the nominated Next Slice may be pulled. `cake-prioritise` may replace that nomination whenever priorities change. Pulling replaces the Cake's Next Slice link with a Current Slice link. To add another current Slice for the same Cake, nominate and pull it in the same plan.
 - Plate is the sole canonical registry for every Slice and the source of truth for current WIP. Open cards live in Eating or Blocked; non-current Slice cards stay archived on Plate. Finish, Pause, or Abandon archives a Slice; Abandon requires a reason.
+- A recurring occurrence that becomes due again substantially unchanged is a Capacity Constraint, not a Slice. Keep one persistent capacity card with Cadence, Load, and Supports; do not generate daily or weekly Plate cards. A bounded effort to establish or materially change the rhythm may still be a Cake and Slice.
+- A configured Capacity Constraint list may share the Cake Stand Trello board, but its cards are not Cake Stand members and do not consume Cake Stand or Plate WIP. Always include their load when judging what fits.
 - A Slice may link to a GitHub delivery issue, but Trello remains canonical. If present, the Trello `GitHub issue:` and GitHub `Cake Slice:` links must be reciprocal.
 - Exiting a Slice removes its Cake-side Current Slice link. When the last current Slice exits, nominate another Slice or Park/Finish the parent Cake in the same plan. A Cake cannot leave the Stand while one of its Slices remains on Plate.
 - Parked and Finished Cakes live alongside the active Cake Stand list but are not active membership. A stable habit may Finish as a Cake and continue as a capacity constraint.
@@ -72,3 +74,5 @@ Operations are:
 - `{"action":"reorder","collection":"on_stand|eating|blocked","record":"<ref>","position":0}`
 
 Use `cake-slice` for canonical Slice writes. Use this helper—not direct Trello edits—for membership, nomination, exits, and order.
+
+When correcting a recurrence-only Slice, preview an `exit` with disposition `abandoned` and a precise reclassification reason. Park its parent unless the Cake has genuinely Finished or already has another valid outcome Slice. Preview the persistent Capacity Constraint card separately before writing it.
