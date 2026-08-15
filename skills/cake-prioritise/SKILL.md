@@ -16,7 +16,7 @@ Read `../../CONTEXT.md` completely before acting. Choose focus in the context of
 5. Fail closed only when unavailable data is relevant to the decision or transition. Surface external drift; never auto-sync it. If a serious contender has stale or insufficient context, ask instead of rejecting it for poor card maintenance.
 6. Normalize one valid Slice for each serious contender. Read `../cake-slice/SKILL.md` and use its quality gates. Resolve candidates from the Cake's provider-aware Slice Index, not only from Plate. If the winner needs a new or reshaped canonical Slice, complete that separately through `cake-slice`, then re-read the portfolio.
 7. Compare the viable shortlist with explicit pairwise trade-offs. Apply hard consequences, viability, portfolio movement, then opportunity cost. Name one winner and what waits. If Cake Stand or Plate exceeds its limit, give the complete keep/park or keep/pause set.
-8. Build one coherent transition plan. Preview it with the helper, show the exact operations, resulting state, and any strong capacity warning, then wait for explicit approval.
+8. Build one coherent transition plan. Preview it with the helper, present it using the approval format below, and wait for explicit approval.
 9. Apply the identical plan with its confirmation token. If state changed, preview again. Capacity overage never hard-blocks, but pass `--allow-capacity-overage` only after the user explicitly accepts the reviewed overage.
 
 If a current Plate card was added before its parent Cake existed, repair it in three separately approved writes: use `create-cake` to put the mature parent in Pantry, use `cake-slice adopt` to attach and shape the parentless card, then preview and apply `move_cake` to admit the parent to the Stand. Do not create a duplicate Cake, reparent an owned Slice, or combine unseen writes under one approval.
@@ -45,6 +45,24 @@ Eat [Cake]: [Slice] next because [decisive reason]. Keep [Cakes]. Park or wait o
 ```
 
 Then include only the closest challengers, meaningful viability failures, and the opportunity cost needed to trust the choice.
+
+## Approval output
+
+Ask for approval as one short, natural-language question:
+
+```text
+Approve: <what will happen to the linked Cakes and Slices, and where>?
+```
+
+Lead immediately with `Approve:` and link entity names instead of printing bare URLs. Speak only in the Cake metaphor: put or finish Slices on the Plate; put Cakes on, take them off, or park them from the Stand; move possible Cakes into or out of the Pantry. Do not expose helper operations, field names, links, providers, confirmation tokens, or terms such as `Slice Registry`, `canonical record`, `Disposition`, or `Plate Projection`.
+
+Add at most one short follow-up sentence when the user needs a capacity warning, a non-obvious consequence, or clarity that nearby work is excluded. Keep it conversational; never add `Changes:`, `Result:`, or `Excluded:` sections, and never narrate an execution log. The approved natural-language outcome remains bound to the helper's exact preview and confirmation token internally.
+
+For example:
+
+```text
+Approve: finish [Slice] on the Plate and take [Cake] off the Stand to park it? The Stand and Plate will both be 5/5; [Other Slice] remains queued.
+```
 
 ## Transition helper
 
