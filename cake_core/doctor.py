@@ -64,8 +64,8 @@ def _handoff_for(code: str) -> str | None:
         "invalid_github_slice_url",
         "invalid_trello_slice_url",
         "invalid_cake_repository",
-        "invalid_slice_index_links",
-        "slice_index_drift",
+        "invalid_available_slice_links",
+        "available_slices_drift",
         "slice_registry_mismatch",
         "legacy_delivery_link",
     }:
@@ -134,9 +134,13 @@ def _finding_for_issue(
         "invalid_github_slice_url": f"{slice_name} is not a valid GitHub issue Slice.",
         "invalid_trello_slice_url": f"{slice_name} is not a valid Trello Slice card.",
         "invalid_cake_repository": f"{cake_name} does not name a valid GitHub repository.",
-        "invalid_slice_index_links": f"{cake_name} contains an invalid link in its Slice index.",
-        "slice_index_drift": f"{cake_name}'s Slice index does not list exactly its canonical Slices.",
-        "slice_registry_mismatch": f"{slice_name} is stored outside {cake_name}'s chosen Slice registry.",
+        "invalid_available_slice_links": (
+            f"{cake_name} contains an invalid link under Available slices."
+        ),
+        "available_slices_drift": (
+            f"{cake_name} does not show exactly the other Slices available to eat."
+        ),
+        "slice_registry_mismatch": f"{slice_name} is not stored with {cake_name}'s other Slices.",
         "legacy_delivery_link": f"{slice_name} still uses the retired Trello-to-GitHub delivery-link model.",
         "invalid_plate_projection": f"{slice_name} has no valid Plate card.",
         "projection_missing_canonical_slice": f"{slice_name}'s Plate card cannot resolve its canonical Slice.",

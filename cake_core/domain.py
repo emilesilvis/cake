@@ -13,9 +13,12 @@ CAKE_FIELDS = (
     "Direction",
     "Finished when",
     "Repository",
+    # Read the old field while existing Cake cards migrate to the human-facing
+    # Available slices projection. New Cake contracts do not write it.
     "Slice index",
     "Current slices",
     "Next slice",
+    "Available slices",
 )
 SLICE_FIELDS = (
     "Cake",
@@ -200,6 +203,7 @@ def parse_cake_contract(text: str) -> dict[str, Any]:
         "slice_index": _parse_reference_list(fields.get("Slice index")),
         "current_slice_links": _parse_reference_list(fields.get("Current slices")),
         "next_slice": fields.get("Next slice") or None,
+        "available_slices": _parse_reference_list(fields.get("Available slices")),
     }
 
 
@@ -209,14 +213,14 @@ def format_cake_contract(
     finished_when: str | None = None,
     current_slices: Iterable[str] | None = None,
     repository: str | None = None,
-    slice_index: Iterable[str] | None = None,
+    available_slices: Iterable[str] | None = None,
     *,
     trello_markdown: bool = False,
 ) -> str:
     if not direction.strip():
         raise CakeError("A mature Cake needs a Direction")
     current_slice_links = _format_reference_list(current_slices or [], plate_only=True)
-    canonical_index = _format_reference_list(slice_index or [])
+    canonical_available = _format_reference_list(available_slices or [])
     canonical_repository = github_repository_url(repository) if repository else None
     canonical_next = _canonical_slice_url(next_slice) if next_slice else None
     if current_slice_links and canonical_next:
@@ -226,9 +230,9 @@ def format_cake_contract(
             ("Direction", direction),
             ("Finished when", finished_when),
             ("Repository", canonical_repository),
-            ("Slice index", canonical_index),
             ("Current slices", current_slice_links),
             ("Next slice", canonical_next),
+            ("Available slices", canonical_available),
         ),
         trello_markdown=trello_markdown,
     )
@@ -402,6 +406,69 @@ def _slice_provider(cake: dict[str, Any]) -> str:
     return "github" if github_repository_name(cake.get("repository")) else "plate"
 
 
+def available_slice_references(
+    cake: dict[str, Any],
+    catalog: Iterable[dict[str, Any]],
+    *,
+    current_references: Iterable[str] = (),
+    next_slice: str | None | object = ...,
+) -> list[str]:
+    """Return every viable inactive Slice except the Cake's nominated Next Slice."""
+
+    if cake.get("state") in {"finished", "archived"}:
+        return []
+    effective_next = cake.get("next_slice") if next_slice is ... else next_slice
+    excluded = {
+        key
+        for key in (
+            canonical_ref(effective_next if isinstance(effective_next, str) else None),
+            *(canonical_ref(reference) for reference in current_references),
+        )
+        if key
+    }
+    eligible: dict[str, tuple[str, dict[str, Any]]] = {}
+    for record in catalog:
+        if (
+            record.get("adapter") != _slice_provider(cake)
+            or not record.get("cake")
+            or not _record_matches(cake, record["cake"])
+            or not record.get("outcome")
+            or not record.get("success")
+            or normalize(record.get("disposition", "candidate")) not in {"candidate", "paused"}
+        ):
+            continue
+        try:
+            reference = _slice_record_url(record)
+        except CakeError:
+            continue
+        key = canonical_ref(reference)
+        if key and key not in excluded:
+            eligible[key] = (reference, record)
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for reference in cake.get("available_slices") or []:
+        key = canonical_ref(reference)
+        if key in eligible and key not in seen:
+            result.append(eligible[key][0])
+            seen.add(key)
+    missing = sorted(
+        (value for key, value in eligible.items() if key not in seen),
+        key=lambda value: (normalize(value[1].get("name", "")), normalize(value[0])),
+    )
+    result.extend(reference for reference, _ in missing)
+    return result
+
+
+def _without_reference(values: Iterable[str], reference: str | None) -> list[str]:
+    key = canonical_ref(reference)
+    return [value for value in values if canonical_ref(value) != key]
+
+
+def _with_reference(values: Iterable[str], reference: str) -> list[str]:
+    return [*_without_reference(values, reference), reference]
+
+
 def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Return structural errors and external-drift warnings without mutating state."""
 
@@ -502,41 +569,34 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
                 {"code": "invalid_cake_repository", "cake": cake_reference, "repository": repository}
             )
 
-        expected_provider = _slice_provider(cake)
-        expected_index: list[str] = []
-        for record in catalog:
-            if (
-                record.get("cake")
-                and _record_matches(cake, record["cake"])
-                and record.get("adapter") == expected_provider
-            ):
-                try:
-                    expected_index.append(_slice_record_url(record))
-                except CakeError:
-                    continue
-        stored_index = list(cake.get("slice_index") or [])
-        invalid_index_links = [
+        stored_available = list(cake.get("available_slices") or [])
+        invalid_available_links = [
             reference
-            for reference in stored_index
+            for reference in stored_available
             if not (is_trello_card_url(reference) or is_github_issue_url(reference))
         ]
-        if invalid_index_links:
+        if invalid_available_links:
             errors.append(
                 {
-                    "code": "invalid_slice_index_links",
+                    "code": "invalid_available_slice_links",
                     "cake": cake_reference,
-                    "slices": invalid_index_links,
+                    "slices": invalid_available_links,
                 }
             )
-        actual_keys = [canonical_ref(value) for value in stored_index]
-        expected_keys = [canonical_ref(value) for value in expected_index]
+        expected_available = available_slice_references(
+            cake,
+            catalog,
+            current_references=current_keys,
+        )
+        actual_keys = [canonical_ref(value) for value in stored_available]
+        expected_keys = [canonical_ref(value) for value in expected_available]
         if len(actual_keys) != len(set(actual_keys)) or set(actual_keys) != set(expected_keys):
             warnings.append(
                 {
-                    "code": "slice_index_drift",
+                    "code": "available_slices_drift",
                     "cake": cake_reference,
-                    "actual": stored_index,
-                    "expected": sorted(expected_index, key=normalize),
+                    "actual": stored_available,
+                    "expected": expected_available,
                 }
             )
 
@@ -723,7 +783,7 @@ def _candidate_for(snapshot: dict[str, Any], cake: dict[str, Any], reference: st
     if not candidate.get("outcome") or not candidate.get("success"):
         raise CakeError("The nominated Slice does not satisfy the Slice contract")
     if candidate.get("adapter") != _slice_provider(cake):
-        raise CakeError("The nominated Slice is not in its Cake's canonical registry")
+        raise CakeError("The nominated Slice is not stored with this Cake's Slices")
     if normalize(candidate.get("disposition", "candidate")) in TERMINAL_SLICE_DISPOSITIONS:
         raise CakeError("A Finished or Abandoned Slice cannot be nominated")
     return candidate
@@ -793,10 +853,15 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
     if action == "nominate":
         cake = _find(on_stand, operation["cake"], "Cake on the Cake Stand")
         candidate = _candidate_for(snapshot, cake, operation["slice"])
-        candidate_reference = canonical_ref(candidate.get("url") or candidate.get("id"))
+        candidate_url = _slice_record_url(candidate)
+        candidate_reference = canonical_ref(candidate_url)
         if any(_current_key(current) == candidate_reference for current in plate):
             raise CakeError("A current Slice cannot also be Next Slice")
-        cake["next_slice"] = _slice_record_url(candidate)
+        available = cake.get("available_slices") or []
+        if cake.get("next_slice"):
+            available = _with_reference(available, cake["next_slice"])
+        cake["available_slices"] = _without_reference(available, candidate_url)
+        cake["next_slice"] = candidate_url
         return
 
     if action == "pull":
@@ -829,6 +894,9 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
             candidate["plate"] = plate_reference
         snapshot.setdefault("plate", {}).setdefault(lane, []).append(current)
         candidate["disposition"] = "current"
+        cake["available_slices"] = _without_reference(
+            cake.get("available_slices") or [], candidate_ref
+        )
         cake["current_slice_links"] = [
             *(cake.get("current_slice_links") or []),
             plate_reference,
@@ -862,6 +930,14 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
             elif disposition in TERMINAL_SLICE_DISPOSITIONS:
                 matching[0]["canonical_state"] = "archived"
         parent = _find(cakes, current["cake"], "parent Cake")
+        if disposition == "paused":
+            parent["available_slices"] = _with_reference(
+                parent.get("available_slices") or [], str(slice_ref)
+            )
+        else:
+            parent["available_slices"] = _without_reference(
+                parent.get("available_slices") or [], str(slice_ref)
+            )
         remaining = [item for item in _plate_records(snapshot) if _record_matches(parent, item.get("cake", ""))]
         parent["current_slice_links"] = [
             _plate_reference(item)
@@ -876,7 +952,11 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
             if parent.get("state") != "on_stand":
                 raise CakeError("Only a Cake on the Cake Stand can receive a Next Slice")
             candidate = _candidate_for(snapshot, parent, operation["next_slice"])
-            parent["next_slice"] = _slice_record_url(candidate)
+            next_reference = _slice_record_url(candidate)
+            parent["available_slices"] = _without_reference(
+                parent.get("available_slices") or [], next_reference
+            )
+            parent["next_slice"] = next_reference
             return
         target = operation.get("cake_state")
         if target not in {"parked", "finished"}:
@@ -886,6 +966,8 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
         _move_cake(snapshot, parent, target)
         parent["current_slice_links"] = []
         parent["next_slice"] = None
+        if target == "finished":
+            parent["available_slices"] = []
         return
 
     if action == "move_cake":
@@ -907,8 +989,16 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
             if field in operation:
                 cake[field] = operation[field] or None
         if "next_slice" in operation:
+            if cake.get("next_slice"):
+                cake["available_slices"] = _with_reference(
+                    cake.get("available_slices") or [], cake["next_slice"]
+                )
             candidate = _candidate_for(snapshot, cake, operation["next_slice"])
-            cake["next_slice"] = _slice_record_url(candidate)
+            next_reference = _slice_record_url(candidate)
+            cake["available_slices"] = _without_reference(
+                cake.get("available_slices") or [], next_reference
+            )
+            cake["next_slice"] = next_reference
         if target == "on_stand":
             if not cake.get("direction"):
                 raise CakeError("A Cake needs a Direction before promotion")
@@ -926,7 +1016,22 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
             if cake.get("next_slice"):
                 _candidate_for(snapshot, cake, cake["next_slice"])
         _move_cake(snapshot, cake, target)
+        if target == "on_stand" and source == "finished":
+            cake["available_slices"] = available_slice_references(
+                cake,
+                _slice_records(snapshot),
+                current_references=(
+                    str(item.get("slice") or item.get("url") or item.get("id"))
+                    for item in current
+                ),
+            )
         if target in {"parked", "finished"}:
+            if target == "parked" and cake.get("next_slice"):
+                cake["available_slices"] = _with_reference(
+                    cake.get("available_slices") or [], cake["next_slice"]
+                )
+            elif target == "finished":
+                cake["available_slices"] = []
             cake["current_slice_links"] = []
             cake["next_slice"] = None
         return
@@ -1247,6 +1352,7 @@ def _transition_source_projection(
                     "slice_index",
                     "current_slice_links",
                     "next_slice",
+                    "available_slices",
                     "position",
                 ),
             )

@@ -38,6 +38,7 @@ def cake(
         "slice_index": [],
         "current_slice_links": [],
         "next_slice": next_slice,
+        "available_slices": [],
     }
 
 
@@ -59,6 +60,9 @@ def slice_record(reference: str, parent: dict, disposition: str = "candidate") -
 
 def snapshot(cakes: list[dict], slices: list[dict], eating: list[dict] | None = None) -> dict:
     current_slices = eating or []
+    current_keys = {
+        canonical_ref(item.get("slice") or item.get("url")) for item in current_slices
+    }
     for parent in cakes:
         parent["slice_index"] = [
             item["url"]
@@ -70,6 +74,15 @@ def snapshot(cakes: list[dict], slices: list[dict], eating: list[dict] | None = 
             item["plate_card"]
             for item in current_slices
             if canonical_ref(item["cake"]) == canonical_ref(parent["url"])
+        ]
+        parent["available_slices"] = [
+            item["url"]
+            for item in slices
+            if canonical_ref(item["cake"]) == canonical_ref(parent["url"])
+            and item["adapter"] == ("github" if parent.get("repository") else "plate")
+            and item.get("disposition") in {"candidate", "paused"}
+            and canonical_ref(item["url"]) not in current_keys
+            and canonical_ref(item["url"]) != canonical_ref(parent.get("next_slice"))
         ]
     return {
         "pantry": [],
@@ -107,6 +120,7 @@ class ContractTest(unittest.TestCase):
                 "slice_index": [],
                 "current_slice_links": [],
                 "next_slice": "https://trello.com/c/slice",
+                "available_slices": [],
             },
         )
         slice_body = format_slice_contract(
@@ -200,18 +214,20 @@ class ContractTest(unittest.TestCase):
         )
         self.assertTrue(is_trello_card_url("https://trello.com/c/AbC123xy"))
 
-    def test_repository_and_provider_neutral_slice_index_round_trip(self) -> None:
+    def test_repository_and_available_slices_round_trip(self) -> None:
         issue = "https://github.com/example/blog/issues/7"
+        other = "https://github.com/example/blog/issues/8"
         body = format_cake_contract(
             "Publish consistently",
             next_slice=issue,
             repository="example/blog",
-            slice_index=[issue],
+            available_slices=[other],
         )
         parsed = parse_cake_contract(body)
         self.assertEqual(parsed["repository"], "https://github.com/example/blog")
-        self.assertEqual(parsed["slice_index"], [issue])
+        self.assertEqual(parsed["available_slices"], [other])
         self.assertEqual(parsed["next_slice"], issue)
+        self.assertNotIn("Slice index:", body)
         self.assertEqual(github_repository_name(parsed["repository"]), "example/blog")
         self.assertTrue(is_github_issue_url(issue))
 
@@ -292,7 +308,23 @@ class TransitionTest(unittest.TestCase):
         target_parent = result["target"]["cake_stand"]["on_stand"][0]
         self.assertIsNone(target_parent["next_slice"])
         self.assertEqual(target_parent["current_slice_links"], [candidate["url"]])
+        self.assertEqual(target_parent["available_slices"], [])
         self.assertEqual(result["target"]["plate"]["eating"][0]["slice"], candidate["url"])
+
+    def test_nominating_a_slice_swaps_it_with_the_previous_next_slice(self) -> None:
+        old_next = "https://trello.com/c/old"
+        parent = cake("blog", next_slice=old_next)
+        old = slice_record("old", parent)
+        chosen = slice_record("chosen", parent)
+
+        result = preview_transition(
+            snapshot([parent], [old, chosen]),
+            [{"action": "nominate", "cake": parent["url"], "slice": chosen["url"]}],
+        )
+
+        target = result["target"]["cake_stand"]["on_stand"][0]
+        self.assertEqual(target["next_slice"], chosen["url"])
+        self.assertEqual(target["available_slices"], [old["url"]])
 
     def test_pull_of_github_slice_plans_a_plate_projection(self) -> None:
         issue_url = "https://github.com/example/blog/issues/7"
@@ -380,6 +412,27 @@ class TransitionTest(unittest.TestCase):
             result["target"]["cake_stand"]["on_stand"][0]["next_slice"], lesson["url"]
         )
         self.assertEqual(result["target"]["slice_catalog"][0]["disposition"], "paused")
+        self.assertEqual(
+            result["target"]["cake_stand"]["on_stand"][0]["available_slices"], []
+        )
+
+    def test_paused_slice_becomes_available_while_another_slice_remains_current(self) -> None:
+        parent = cake("math")
+        first = slice_record("first", parent)
+        second = slice_record("second", parent)
+        source = snapshot(
+            [parent],
+            [first, second],
+            [current(first, parent), current(second, parent)],
+        )
+
+        result = preview_transition(
+            source,
+            [{"action": "exit", "plate_slice": first["url"], "disposition": "paused"}],
+        )
+
+        target = result["target"]["cake_stand"]["on_stand"][0]
+        self.assertEqual(target["available_slices"], [first["url"]])
 
     def test_cake_cannot_leave_stand_while_a_slice_is_current(self) -> None:
         parent = cake("blog")

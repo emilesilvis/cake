@@ -7,6 +7,7 @@ from typing import Any
 from .domain import (
     CakeError,
     TERMINAL_SLICE_DISPOSITIONS,
+    available_slice_references,
     canonical_ref,
     format_cake_contract,
     format_plate_projection_contract,
@@ -40,6 +41,7 @@ def _parent_state(cake: dict[str, Any]) -> dict[str, Any]:
             "current_slice_links",
             "current_slices",
             "next_slice",
+            "available_slices",
             "raw",
         )
     }
@@ -57,7 +59,7 @@ def _cake_body(
     cake: dict[str, Any],
     *,
     repository: str | None = None,
-    slice_index: list[str] | None = None,
+    available_slices: list[str] | None = None,
     next_slice: str | None | object = ...,
 ) -> str:
     effective_next = cake.get("next_slice") if next_slice is ... else next_slice
@@ -67,7 +69,9 @@ def _cake_body(
         cake.get("finished_when"),
         cake.get("current_slices", []),
         repository if repository is not None else cake.get("repository"),
-        slice_index if slice_index is not None else list(cake.get("slice_index") or []),
+        available_slices
+        if available_slices is not None
+        else list(cake.get("available_slices") or []),
         trello_markdown=True,
     )
 
@@ -76,7 +80,7 @@ def _preview_cake_body(
     cake: dict[str, Any],
     *,
     provider: str,
-    slice_index: list[str],
+    available_slices: list[str],
     repository: str | None = None,
     next_slice: str | None | object = ...,
 ) -> str:
@@ -89,7 +93,9 @@ def _preview_cake_body(
     body = _cake_body(
         cake,
         repository=repository,
-        slice_index=[dummy if value == placeholder else value for value in slice_index],
+        available_slices=[
+            dummy if value == placeholder else value for value in available_slices
+        ],
         next_slice=dummy if next_slice == placeholder else next_slice,
     )
     return body.replace(dummy, placeholder)
@@ -140,64 +146,50 @@ class CakeSlicer:
         self._assert_parent(cake, record)
         return record
 
-    def preview_sync_index(self, cake_reference: str) -> dict[str, Any]:
+    def preview_sync_available(self, cake_reference: str) -> dict[str, Any]:
         snapshot, cake = self._snapshot_and_cake(cake_reference)
-        provider, _ = self._provider(cake)
         self._assert_registry_available(snapshot, cake)
-        records = [
-            item
-            for item in snapshot.get("slice_catalog", [])
-            if item.get("adapter") == provider
-            and item.get("cake")
-            and _record_matches(cake, item["cake"])
+        current_references = [
+            item.get("slice") or item.get("url") or item.get("id")
+            for item in (
+                *snapshot.get("plate", {}).get("eating", []),
+                *snapshot.get("plate", {}).get("blocked", []),
+            )
+            if item.get("cake") and _record_matches(cake, item["cake"])
         ]
-        by_reference = {_slice_ref(item): item for item in records}
-        existing = [
-            value
-            for value in cake.get("slice_index") or []
-            if any(canonical_ref(value) == canonical_ref(reference) for reference in by_reference)
-        ]
-        existing_keys = {canonical_ref(value) for value in existing}
-        missing = sorted(
-            (
-                reference
-                for reference in by_reference
-                if canonical_ref(reference) not in existing_keys
-            ),
-            key=lambda reference: (
-                normalize(by_reference[reference].get("name", "")),
-                normalize(reference),
-            ),
+        target_available = available_slice_references(
+            cake,
+            snapshot.get("slice_catalog", []),
+            current_references=(str(value) for value in current_references if value),
         )
-        target_index = [*existing, *missing]
         write = {
-            "action": "sync_cake_slice_index",
+            "action": "sync_cake_available_slices",
             "cake": _card_ref(cake),
-            "slice_index": target_index,
-            "target_body": _cake_body(cake, slice_index=target_index),
+            "available_slices": target_available,
+            "target_body": _cake_body(cake, available_slices=target_available),
         }
         payload = {
-            "operation": "sync_slice_index",
+            "operation": "sync_available_slices",
             "parent": _parent_state(cake),
             "write": write,
         }
         return {"status": "preview", "confirmation_token": token_for(payload), **payload}
 
-    def sync_index(
+    def sync_available(
         self, cake_reference: str, *, confirmation_token: str | None = None
     ) -> dict[str, Any]:
-        preview = self.preview_sync_index(cake_reference)
+        preview = self.preview_sync_available(cake_reference)
         if confirmation_token is None:
             return preview
         if confirmation_token != preview["confirmation_token"]:
-            raise CakeError("The approval is stale: the Cake or its Slice Registry changed")
+            raise CakeError("The approval is stale: the Cake or its Slices changed")
         self.portfolio._update_cake(
-            preview["parent"], slice_index=preview["write"]["slice_index"]
+            preview["parent"], available_slices=preview["write"]["available_slices"]
         )
         return {
             "status": "synced",
             "cake": preview["write"]["cake"],
-            "slice_index": preview["write"]["slice_index"],
+            "available_slices": preview["write"]["available_slices"],
         }
 
     @staticmethod
@@ -240,7 +232,7 @@ class CakeSlicer:
             and item.get("status") in {"unavailable", "unsupported"}
             for item in snapshot.get("source_health", [])
         ):
-            raise CakeError("The Cake's Slice Registry is unavailable; the write cannot be checked safely")
+            raise CakeError("The Cake's Slices could not be read, so the write cannot be checked safely")
 
     def preview_create(
         self,
@@ -283,13 +275,15 @@ class CakeSlicer:
             }
             placeholder = CREATED_TRELLO_SLICE_URL
 
-        target_index = _append_reference(list(cake.get("slice_index") or []), placeholder)
+        target_available = _append_reference(
+            list(cake.get("available_slices") or []), placeholder
+        )
         cake_write = {
-            "action": "append_to_cake_slice_index",
+            "action": "add_available_slice",
             "cake": _card_ref(cake),
-            "slice_index": target_index,
+            "available_slices": target_available,
             "target_body": _preview_cake_body(
-                cake, provider=provider, slice_index=target_index
+                cake, provider=provider, available_slices=target_available
             ),
         }
         payload = {
@@ -356,21 +350,25 @@ class CakeSlicer:
 
         created_reference = _slice_ref(created)
         cake = preview["parent"]
-        target_index = _append_reference(
+        target_available = _append_reference(
             [
                 value
-                for value in preview["cake_write"]["slice_index"]
+                for value in preview["cake_write"]["available_slices"]
                 if value not in {CREATED_GITHUB_SLICE_URL, CREATED_TRELLO_SLICE_URL}
             ],
             created_reference,
         )
         try:
-            self.portfolio._update_cake(cake, slice_index=target_index)
+            self.portfolio._update_cake(cake, available_slices=target_available)
         except CakeError as exc:
             raise CakeError(
-                f"Slice {created_reference} was created, but its Cake index was not updated; reconcile the Cake card before continuing. Cause: {exc}"
+                f"Slice {created_reference} was created, but its Cake was not updated; reconcile the Cake card before continuing. Cause: {exc}"
             ) from None
-        return {"status": "created", "slice": created, "cake_slice_index": target_index}
+        return {
+            "status": "created",
+            "slice": created,
+            "cake_available_slices": target_available,
+        }
 
     def preview_update(
         self,
@@ -482,9 +480,9 @@ class CakeSlicer:
             disposition=disposition,
             trello_markdown=True,
         )
-        target_index = _append_reference(
-            list(cake.get("slice_index") or []), _card_ref(current)
-        )
+        target_available = list(cake.get("available_slices") or [])
+        if disposition == "candidate":
+            target_available = _append_reference(target_available, _card_ref(current))
         payload = {
             "operation": "adopt_slice",
             "parent": _parent_state(cake),
@@ -495,10 +493,12 @@ class CakeSlicer:
                 **target,
             },
             "cake_write": {
-                "action": "append_to_cake_slice_index",
+                "action": "update_available_slices",
                 "cake": _card_ref(cake),
-                "slice_index": target_index,
-                "target_body": _cake_body(cake, slice_index=target_index),
+                "available_slices": target_available,
+                "target_body": _cake_body(
+                    cake, available_slices=target_available
+                ),
             },
         }
         return {"status": "preview", "confirmation_token": token_for(payload), **payload}
@@ -532,7 +532,8 @@ class CakeSlicer:
             source["id"], name=write["title"], description=write["body"]
         )
         self.portfolio._update_cake(
-            preview["parent"], slice_index=preview["cake_write"]["slice_index"]
+            preview["parent"],
+            available_slices=preview["cake_write"]["available_slices"],
         )
         adopted = {
             "id": card["id"],
@@ -591,13 +592,20 @@ class CakeSlicer:
             for item in self.portfolio.github.slices(repository_name)
             if item.get("cake") and _record_matches(cake, item["cake"])
         ]
-        existing_refs = [_slice_ref(item) for item in existing_github]
-        target_index = _append_reference(existing_refs, CREATED_GITHUB_SLICE_URL)
-        target_next = (
-            CREATED_GITHUB_SLICE_URL
-            if canonical_ref(cake.get("next_slice")) == canonical_ref(_slice_ref(source))
-            else cake.get("next_slice")
+        source_is_next = canonical_ref(cake.get("next_slice")) == canonical_ref(
+            _slice_ref(source)
         )
+        target_next = CREATED_GITHUB_SLICE_URL if source_is_next else cake.get("next_slice")
+        target_cake = {
+            **cake,
+            "repository": github_repository_url(repository_name),
+            "available_slices": [],
+        }
+        target_available = available_slice_references(target_cake, existing_github)
+        if not source_is_next:
+            target_available = _append_reference(
+                target_available, CREATED_GITHUB_SLICE_URL
+            )
         migration_dummy = "https://github.com/cake/migrated-slice/issues/0"
         migrated_body = format_plate_projection_contract(
             migration_dummy,
@@ -623,16 +631,16 @@ class CakeSlicer:
                     "closed": True,
                 },
                 {
-                    "action": "set_cake_slice_registry",
+                    "action": "set_cake_slice_provider",
                     "cake": _card_ref(cake),
                     "repository": github_repository_url(repository_name),
-                    "slice_index": target_index,
+                    "available_slices": target_available,
                     "next_slice": target_next,
                     "target_body": _preview_cake_body(
                         cake,
                         provider="github",
                         repository=repository_name,
-                        slice_index=target_index,
+                        available_slices=target_available,
                         next_slice=target_next,
                     ),
                 },
@@ -670,9 +678,9 @@ class CakeSlicer:
         self.portfolio.trello.update_card(
             preview["source"]["id"], description=superseded_body, closed=True
         )
-        target_index = [
+        available_slices = [
             created_reference if value == CREATED_GITHUB_SLICE_URL else value
-            for value in cake_write["slice_index"]
+            for value in cake_write["available_slices"]
         ]
         next_slice = (
             created_reference
@@ -682,12 +690,12 @@ class CakeSlicer:
         self.portfolio._update_cake(
             preview["parent"],
             repository=cake_write["repository"],
-            slice_index=target_index,
+            available_slices=available_slices,
             next_slice=next_slice,
         )
         return {
             "status": "migrated",
             "slice": created,
             "superseded_trello_slice": _slice_ref(preview["source"]),
-            "cake_slice_index": target_index,
+            "cake_available_slices": available_slices,
         }

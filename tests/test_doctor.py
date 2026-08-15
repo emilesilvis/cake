@@ -22,6 +22,7 @@ def healthy_snapshot() -> dict:
         "slice_index": [slice_url],
         "current_slice_links": [slice_url],
         "next_slice": None,
+        "available_slices": [],
     }
     candidate = {
         "id": "slice",
@@ -167,6 +168,35 @@ class DoctorTest(unittest.TestCase):
             if item["code"] == "plate_projection_link_drift"
         )
         self.assertEqual(finding["handoff"], "cake-prioritise")
+
+    def test_missing_available_slice_is_reported_in_human_terms(self) -> None:
+        snapshot = healthy_snapshot()
+        parent = snapshot["cake_stand"]["on_stand"][0]
+        candidate = deepcopy(snapshot["slice_catalog"][0])
+        candidate.update(
+            {
+                "id": "later",
+                "url": "https://trello.com/c/later",
+                "name": "Useful Cake: Later result",
+                "disposition": "candidate",
+                "canonical_state": "archived",
+            }
+        )
+        snapshot["slice_catalog"].append(candidate)
+        parent["available_slices"] = []
+        snapshot["issues"] = validate_snapshot(snapshot)
+        portfolio = Mock()
+        portfolio.snapshot.return_value = snapshot
+
+        result = CakeDoctor(portfolio).check()
+
+        finding = next(
+            item
+            for item in result["findings"]
+            if item["code"] == "available_slices_drift"
+        )
+        self.assertIn("other Slices available to eat", finding["message"])
+        self.assertEqual(finding["handoff"], "cake-slice")
 
 
 if __name__ == "__main__":

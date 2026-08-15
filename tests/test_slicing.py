@@ -20,6 +20,7 @@ def parent():
         "current_slice_links": [],
         "current_slices": [],
         "next_slice": None,
+        "available_slices": [],
         "raw": {
             "id": "cake",
             "shortLink": "cake",
@@ -63,7 +64,7 @@ def portfolio_for(cake):
 
 
 class SlicingTest(unittest.TestCase):
-    def test_sync_index_lists_every_trello_only_slice_on_the_cake(self) -> None:
+    def test_sync_available_lists_every_viable_inactive_slice_on_the_cake(self) -> None:
         cake = parent()
         first = {
             "id": "one",
@@ -71,6 +72,9 @@ class SlicingTest(unittest.TestCase):
             "name": "Blog: First",
             "adapter": "plate",
             "cake": cake["url"],
+            "outcome": "First exists",
+            "success": "First is observable",
+            "disposition": "candidate",
             "raw": {"shortLink": "one"},
         }
         second = {
@@ -79,24 +83,30 @@ class SlicingTest(unittest.TestCase):
             "name": "Blog: Second",
             "adapter": "plate",
             "cake": cake["url"],
+            "outcome": "Second exists",
+            "success": "Second is observable",
+            "disposition": "paused",
             "raw": {"shortLink": "two"},
         }
         portfolio = portfolio_for(cake)
         portfolio.snapshot.return_value = {"slice_catalog": [second, first]}
         slicer = CakeSlicer(portfolio)
 
-        preview = slicer.sync_index(cake["url"])
+        preview = slicer.sync_available(cake["url"])
 
         self.assertEqual(
-            preview["write"]["slice_index"],
+            preview["write"]["available_slices"],
             ["https://trello.com/c/one", "https://trello.com/c/two"],
         )
-        self.assertIn("**Slice index:** https://trello.com/c/one", preview["write"]["target_body"])
-        slicer.sync_index(
+        self.assertIn(
+            "**Available slices:** https://trello.com/c/one",
+            preview["write"]["target_body"],
+        )
+        slicer.sync_available(
             cake["url"], confirmation_token=preview["confirmation_token"]
         )
         self.assertEqual(
-            portfolio._update_cake.call_args.kwargs["slice_index"],
+            portfolio._update_cake.call_args.kwargs["available_slices"],
             ["https://trello.com/c/one", "https://trello.com/c/two"],
         )
 
@@ -258,7 +268,7 @@ class SlicingTest(unittest.TestCase):
         portfolio.trello.update_card.assert_called_once_with("slice", closed=True)
         self.assertNotIn("next_slice", result)
 
-    def test_repository_backed_create_writes_github_issue_and_cake_index(self) -> None:
+    def test_repository_backed_create_writes_github_issue_and_makes_it_available(self) -> None:
         cake = parent()
         cake["repository"] = "https://github.com/example/blog"
         issue_url = "https://github.com/example/blog/issues/7"
@@ -282,9 +292,9 @@ class SlicingTest(unittest.TestCase):
         portfolio.github.ensure_label.assert_called_once_with("example/blog", "cake-slice")
         portfolio.github.create_issue.assert_called_once()
         portfolio.trello.create_card.assert_not_called()
-        self.assertEqual(result["cake_slice_index"], [issue_url])
+        self.assertEqual(result["cake_available_slices"], [issue_url])
         self.assertEqual(
-            portfolio._update_cake.call_args.kwargs["slice_index"], [issue_url]
+            portfolio._update_cake.call_args.kwargs["available_slices"], [issue_url]
         )
 
     def test_updating_current_github_slice_preserves_plate_backlink(self) -> None:
@@ -358,7 +368,7 @@ class SlicingTest(unittest.TestCase):
         self.assertEqual([write["action"] for write in preview["writes"]], [
             "create_github_slice_issue",
             "supersede_trello_slice",
-            "set_cake_slice_registry",
+            "set_cake_slice_provider",
         ])
         self.assertIn("<created GitHub Slice URL>", preview["writes"][2]["target_body"])
         portfolio.github.create_issue.assert_not_called()
@@ -379,7 +389,7 @@ class SlicingTest(unittest.TestCase):
         self.assertTrue(portfolio.trello.update_card.call_args.kwargs["closed"])
         cake_update = portfolio._update_cake.call_args.kwargs
         self.assertEqual(cake_update["repository"], "https://github.com/example/blog")
-        self.assertEqual(cake_update["slice_index"], [issue_url])
+        self.assertEqual(cake_update["available_slices"], [])
         self.assertEqual(cake_update["next_slice"], issue_url)
         self.assertEqual(result["status"], "migrated")
 
