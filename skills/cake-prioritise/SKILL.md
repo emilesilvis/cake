@@ -48,28 +48,20 @@ Then include only the closest challengers, meaningful viability failures, and th
 
 ## Approval output
 
-Use the same compact, location-aware format for every approval:
+Ask for approval as one short, natural-language question:
 
 ```text
-Approve: <plain-language action> [linked entity] from/in <portfolio surface>, optionally to <destination>?
-
-Changes: <exact domain-state transitions>.
-Result: <resulting locations and relevant capacity>.
-Excluded: <closely related work outside this approval>.
+Approve: <what will happen to the linked Cakes and Slices, and where>?
 ```
 
-Lead immediately with `Approve:`; do not introduce it with phrases such as `Preview ready`, `Queued preview`, or `contract update`. Always name where the affected record is now and, when it moves, its destination. Use Cake language such as Plate, Stand, Pantry, Parked, Finished, or Slice Registry rather than provider mechanics. Say `move [Cake] from the Stand to Parked`, never `park [Cake] on the Stand`, because Parked Cakes are no longer active Stand members.
+Lead immediately with `Approve:` and link entity names instead of printing bare URLs. Speak only in the Cake metaphor: put or finish Slices on the Plate; put Cakes on, take them off, or park them from the Stand; move possible Cakes into or out of the Pantry. Do not expose helper operations, field names, links, providers, confirmation tokens, or terms such as `Slice Registry`, `canonical record`, `Disposition`, or `Plate Projection`.
 
-Keep `Changes:` to the exact user-visible domain transitions, `Result:` to the resulting portfolio state and capacity, and include `Excluded:` only when nearby queued work could reasonably be mistaken as part of the approval. Surface a capacity overage prominently in `Result:`. Link entity names instead of printing bare URLs. Provider writes and reciprocal-link maintenance must still be represented by the stated domain transitions, but do not narrate them as an execution log.
+Add at most one short follow-up sentence when the user needs a capacity warning, a non-obvious consequence, or clarity that nearby work is excluded. Keep it conversational; never add `Changes:`, `Result:`, or `Excluded:` sections, and never narrate an execution log. The approved natural-language outcome remains bound to the helper's exact preview and confirmation token internally.
 
 For example:
 
 ```text
-Approve: finish [Slice] from the Plate and move [Cake] from the Stand to Parked?
-
-Changes: Slice → Finished; Cake → Parked because no Candidate Slice remains.
-Result: Stand 5/5 · Plate 5/5.
-Excluded: [Other Slice] finish remains queued.
+Approve: finish [Slice] on the Plate and take [Cake] off the Stand to park it? The Stand and Plate will both be 5/5; [Other Slice] remains queued.
 ```
 
 ## Transition helper
