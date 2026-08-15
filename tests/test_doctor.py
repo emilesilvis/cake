@@ -198,6 +198,30 @@ class DoctorTest(unittest.TestCase):
         self.assertIn("other Slices available to eat", finding["message"])
         self.assertEqual(finding["handoff"], "cake-slice")
 
+    def test_legacy_slice_index_is_reported_even_when_links_are_healthy(self) -> None:
+        snapshot = healthy_snapshot()
+        parent = snapshot["cake_stand"]["on_stand"][0]
+        parent["raw"] = {
+            "desc": (
+                "**Direction:** Create a useful change\n\n"
+                "**Slice index:** https://trello.com/c/slice\n\n"
+                "**Current slices:** https://trello.com/c/slice"
+            )
+        }
+        snapshot["issues"] = validate_snapshot(snapshot)
+        portfolio = Mock()
+        portfolio.snapshot.return_value = snapshot
+
+        result = CakeDoctor(portfolio).check()
+
+        finding = next(
+            item
+            for item in result["findings"]
+            if item["code"] == "legacy_slice_index"
+        )
+        self.assertIn("old Slice history", finding["message"])
+        self.assertEqual(finding["handoff"], "cake-slice")
+
 
 if __name__ == "__main__":
     unittest.main()

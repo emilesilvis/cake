@@ -66,6 +66,7 @@ def _handoff_for(code: str) -> str | None:
         "invalid_cake_repository",
         "invalid_available_slice_links",
         "available_slices_drift",
+        "legacy_slice_index",
         "slice_registry_mismatch",
         "legacy_delivery_link",
     }:
@@ -139,6 +140,9 @@ def _finding_for_issue(
         ),
         "available_slices_drift": (
             f"{cake_name} does not show exactly the other Slices available to eat."
+        ),
+        "legacy_slice_index": (
+            f"{cake_name} still shows old Slice history instead of only what is Current, Next, or Available."
         ),
         "slice_registry_mismatch": f"{slice_name} is not stored with {cake_name}'s other Slices.",
         "legacy_delivery_link": f"{slice_name} still uses the retired Trello-to-GitHub delivery-link model.",

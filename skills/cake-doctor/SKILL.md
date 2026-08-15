@@ -9,7 +9,7 @@ Read `../../CONTEXT.md` completely before acting. Trello is the portfolio interf
 
 ## Workflow
 
-1. Run `python3 scripts/doctor.py check`. This is read-only. If configuration or a provider is unavailable, report that plainly and stop only where the missing source prevents a reliable conclusion.
+1. Run `python3 scripts/doctor.py check`. This is read-only. Treat a visible legacy `Slice index:` field as a finding even when the underlying links are otherwise correct. If configuration or a provider is unavailable, report that plainly and stop only where the missing source prevents a reliable conclusion.
 2. Lead with either `Cake is healthy` or `Cake needs attention`. Give the current counts and visible WIP position, then list only actionable findings using card names and clickable links. Do not dump raw issue codes or JSON unless the user asks.
 3. Separate structural health from portfolio judgment. A structurally valid Plate is not automatically the right Plate. If the user added or moved current work manually, or the report marks a portfolio challenge as required, read `../cake-prioritise/SKILL.md` completely and challenge whether the Slice and its parent belong in current WIP.
 4. Route membership, Cake Stand, Next Slice, Plate, and WIP decisions to `cake-prioritise`. Route malformed Slice contracts, Available slices drift, and provider migration to `cake-slice`. Read the delegated skill completely before using it.
