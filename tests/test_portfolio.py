@@ -274,7 +274,6 @@ class PortfolioTest(unittest.TestCase):
                     "Help readers discover writing",
                     current_slices=[projection_url],
                     repository="example/blog",
-                    slice_index=[issue_url],
                 ),
             )
         ]
@@ -359,7 +358,11 @@ class PortfolioTest(unittest.TestCase):
                 "stand",
                 "on",
                 "handwritten.blog",
-                format_cake_contract("Help readers", next_slice=slice_url),
+                format_cake_contract(
+                    "Help readers",
+                    next_slice=slice_url,
+                    available_slices=["https://trello.com/c/search"],
+                ),
             )
         ]
         trello.board_cards["stand"][0]["url"] = cake_url
@@ -371,7 +374,15 @@ class PortfolioTest(unittest.TestCase):
                 "handwritten.blog: Discovery feed",
                 format_slice_contract(cake_url, "Readers find posts", "The feed works"),
                 closed=True,
-            )
+            ),
+            card(
+                "search",
+                "plate",
+                "eating",
+                "handwritten.blog: Search",
+                format_slice_contract(cake_url, "Readers search", "Search works"),
+                closed=True,
+            ),
         ]
         trello.board_cards["plate"][0]["url"] = slice_url
         portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
@@ -382,6 +393,10 @@ class PortfolioTest(unittest.TestCase):
         cake_write = trello.writes[1][1]
         self.assertIn("**Cake:** https://trello.com/c/blog", slice_write["description"])
         self.assertIn("**Current slices:** https://trello.com/c/feed", cake_write["description"])
+        self.assertIn(
+            "**Available slices:** https://trello.com/c/search",
+            cake_write["description"],
+        )
         self.assertNotIn("**Next slice:**", cake_write["description"])
 
     def test_pull_of_github_slice_creates_cross_linked_plate_projection(self) -> None:
@@ -398,7 +413,6 @@ class PortfolioTest(unittest.TestCase):
                     "Publish clear personal essays",
                     next_slice=issue_url,
                     repository="example/blog",
-                    slice_index=[issue_url],
                 ),
             )
         ]
@@ -486,7 +500,11 @@ class PortfolioTest(unittest.TestCase):
                 "stand",
                 "on",
                 "handwritten.blog",
-                format_cake_contract("Help readers", current_slices=[current_url]),
+                format_cake_contract(
+                    "Help readers",
+                    current_slices=[current_url],
+                    available_slices=[next_url],
+                ),
             )
         ]
         trello.board_cards["plate"] = [
@@ -525,6 +543,7 @@ class PortfolioTest(unittest.TestCase):
         cake_write = trello.writes[1][1]
         self.assertIn("**Next slice:** https://trello.com/c/search", cake_write["description"])
         self.assertNotIn("**Current slices:**", cake_write["description"])
+        self.assertNotIn("**Available slices:**", cake_write["description"])
 
     def test_apply_rejects_stale_confirmation_before_writing(self) -> None:
         portfolio = CakePortfolio(config=config(), trello=FakeTrello(), github=FakeGitHub())

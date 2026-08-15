@@ -9,6 +9,7 @@ from typing import Any
 from .config import CONFIG_PATH, config_status, load_config, normalized_config
 from .domain import (
     CakeError,
+    available_slice_references,
     canonical_ref,
     format_cake_contract,
     format_plate_projection_contract,
@@ -121,6 +122,15 @@ def _record_matches(record: dict[str, Any], reference: str | None) -> bool:
         canonical_ref(record.get("slice")),
         canonical_ref(record.get("plate_card")),
     }
+
+
+def _without_slice(values: list[str], reference: str | None) -> list[str]:
+    key = canonical_ref(reference)
+    return [value for value in values if canonical_ref(value) != key]
+
+
+def _with_slice(values: list[str], reference: str) -> list[str]:
+    return [*_without_slice(values, reference), reference]
 
 
 class CakePortfolio:
@@ -413,6 +423,15 @@ class CakePortfolio:
 
         snapshot["slice_catalog"] = list(catalog_by_ref.values())
         catalog = snapshot["slice_catalog"]
+        for cake in cakes:
+            expected_adapter = "github" if github_repository_name(cake.get("repository")) else "plate"
+            cake["slice_index"] = [
+                _slice_ref(record)
+                for record in catalog
+                if record.get("adapter") == expected_adapter
+                and record.get("cake")
+                and _record_matches(cake, record["cake"])
+            ]
         for lane in ("eating", "blocked"):
             for current in snapshot["plate"][lane]:
                 canonical = next(
@@ -649,6 +668,7 @@ class CakePortfolio:
             "slice_index": cake.get("slice_index", []),
             "next_slice": cake.get("next_slice"),
             "current_slices": cake.get("current_slices", []),
+            "available_slices": cake.get("available_slices", []),
             **changes,
         }
         description = format_cake_contract(
@@ -657,7 +677,7 @@ class CakePortfolio:
             values.get("finished_when"),
             values.get("current_slices"),
             values.get("repository"),
-            values.get("slice_index"),
+            values.get("available_slices"),
             trello_markdown=True,
         )
         self.trello.update_card(cake["id"], description=description)
@@ -668,7 +688,15 @@ class CakePortfolio:
         if action == "nominate":
             cake = self._cake_record(snapshot, operation["cake"])
             candidate = self._candidate_record(snapshot, operation["slice"])
-            self._update_cake(cake, next_slice=_slice_ref(candidate))
+            candidate_reference = _slice_ref(candidate)
+            available = list(cake.get("available_slices") or [])
+            if cake.get("next_slice"):
+                available = _with_slice(available, cake["next_slice"])
+            self._update_cake(
+                cake,
+                next_slice=candidate_reference,
+                available_slices=_without_slice(available, candidate_reference),
+            )
             return
 
         if action == "pull":
@@ -687,6 +715,7 @@ class CakePortfolio:
             disposition = normalize(operation["disposition"])
             reason = operation.get("reason")
             candidate = self._candidate_record(snapshot, current.get("slice") or current["url"])
+            candidate_reference = _slice_ref(candidate)
             description = format_slice_contract(
                 _card_ref(parent),
                 candidate["outcome"],
@@ -714,18 +743,35 @@ class CakePortfolio:
                 if item is not current and _record_matches(parent, item.get("cake"))
             ]
             remaining_refs = [_plate_ref(item) for item in remaining]
+            available = list(parent.get("available_slices") or [])
+            available = (
+                _with_slice(available, candidate_reference)
+                if disposition == "paused"
+                else _without_slice(available, candidate_reference)
+            )
 
             if operation.get("next_slice"):
                 next_slice = self._candidate_record(snapshot, operation["next_slice"])
+                next_reference = _slice_ref(next_slice)
                 self._update_cake(
                     parent,
-                    next_slice=_slice_ref(next_slice),
+                    next_slice=next_reference,
                     current_slices=remaining_refs,
+                    available_slices=_without_slice(available, next_reference),
                 )
             elif operation.get("cake_state"):
-                self._move_cake_card(parent, operation["cake_state"], operation)
+                self._move_cake_card(
+                    parent,
+                    operation["cake_state"],
+                    {**operation, "available_slices": available},
+                )
             else:
-                self._update_cake(parent, next_slice=None, current_slices=remaining_refs)
+                self._update_cake(
+                    parent,
+                    next_slice=None,
+                    current_slices=remaining_refs,
+                    available_slices=available,
+                )
             return
 
         if action == "move_cake":
@@ -821,10 +867,14 @@ class CakePortfolio:
                 closed=False,
             )
             plate_reference = _card_ref(updated) if updated.get("url") else _card_ref(candidate)
+        available = list(cake.get("available_slices") or [])
+        if cake.get("next_slice"):
+            available = _with_slice(available, cake["next_slice"])
         self._update_cake(
             cake,
             next_slice=None,
             current_slices=[*cake.get("current_slices", []), plate_reference],
+            available_slices=_without_slice(available, _slice_ref(candidate)),
         )
 
     def _move_cake_card(
@@ -849,10 +899,21 @@ class CakePortfolio:
             "slice_index": cake.get("slice_index", []),
             "next_slice": operation.get("next_slice", cake.get("next_slice")),
             "current_slices": cake.get("current_slices", []),
+            "available_slices": operation.get(
+                "available_slices", cake.get("available_slices", [])
+            ),
         }
-        if target in {"parked", "finished"}:
+        if target == "parked":
+            if values.get("next_slice"):
+                values["available_slices"] = _with_slice(
+                    list(values.get("available_slices") or []), values["next_slice"]
+                )
             values["next_slice"] = None
             values["current_slices"] = []
+        elif target == "finished":
+            values["next_slice"] = None
+            values["current_slices"] = []
+            values["available_slices"] = []
         elif target == "on_stand":
             source = snapshot or self.snapshot()
             current = [
@@ -866,13 +927,31 @@ class CakePortfolio:
             elif operation.get("next_slice"):
                 candidate = self._candidate_record(source, operation["next_slice"])
                 values["next_slice"] = _slice_ref(candidate)
+            if values.get("next_slice"):
+                values["available_slices"] = _without_slice(
+                    list(values.get("available_slices") or []), values["next_slice"]
+                )
+            if cake.get("state") == "finished":
+                values["available_slices"] = available_slice_references(
+                    {
+                        **cake,
+                        "state": "on_stand",
+                        "next_slice": values.get("next_slice"),
+                        "available_slices": values.get("available_slices", []),
+                    },
+                    source.get("slice_catalog", []),
+                    current_references=(
+                        str(item.get("slice") or item.get("url") or item.get("id"))
+                        for item in current
+                    ),
+                )
         changes["description"] = format_cake_contract(
             values["direction"],
             values.get("next_slice"),
             values.get("finished_when"),
             values.get("current_slices"),
             values.get("repository"),
-            values.get("slice_index"),
+            values.get("available_slices"),
             trello_markdown=True,
         )
         changes["board_id"] = stand_board["id"]

@@ -40,9 +40,9 @@ def build_parser() -> argparse.ArgumentParser:
     read_slice.add_argument("--cake", required=True)
     read_slice.add_argument("--slice", required=True, dest="slice_reference")
 
-    sync_index = subparsers.add_parser("sync-index")
-    sync_index.add_argument("--cake", required=True)
-    sync_index.add_argument("--apply-token")
+    sync_available = subparsers.add_parser("sync-available")
+    sync_available.add_argument("--cake", required=True)
+    sync_available.add_argument("--apply-token")
 
     create = subparsers.add_parser("create")
     create.add_argument("--cake", required=True)
@@ -74,8 +74,8 @@ def main() -> int:
             result = slicer.read_cake(args.cake)
         elif args.command == "read-slice":
             result = slicer.read_slice(args.cake, args.slice_reference)
-        elif args.command == "sync-index":
-            result = slicer.sync_index(
+        elif args.command == "sync-available":
+            result = slicer.sync_available(
                 args.cake, confirmation_token=args.apply_token
             )
         elif args.command == "migrate-to-github":

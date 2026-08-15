@@ -5,28 +5,12 @@ Cake is a personal portfolio system for deciding which enduring pursuits deserve
 ## Language
 
 **Cake**:
-A portfolio-level pursuit or direction that can yield one or more Slices. Its Trello card is the durable directory for the pursuit and all of its Slices.
+A portfolio-level pursuit or direction that can yield one or more Slices. Its Trello card shows what is Current or Next while active and every other Slice still available to eat.
 _Avoid_: Project, task, initiative
 
 **Slice**:
-One independently finishable outcome with observable success, exactly one parent Cake, and exactly one canonical Slice Record.
+One independently finishable outcome with observable success and exactly one parent Cake. It lives in a GitHub issue when its Cake names a Repository; otherwise it lives in a Trello card.
 _Avoid_: Task, implementation step, entire Cake
-
-**Slice Record**:
-The authoritative record of a Slice. It is a GitHub issue for a repository-backed Cake and a Trello card for a Trello-only Cake.
-_Avoid_: Plate card, proxy, duplicate record
-
-**Slice Registry**:
-The complete set of canonical Slice Records belonging to one Cake. A Cake has one registry provider, chosen by whether it names a Repository.
-_Avoid_: Plate, task backlog, current work
-
-**Slice Index**:
-The exhaustive list of canonical Slice Records on a Cake card. It is derived navigation, not an ordering or currentness signal.
-_Avoid_: Next Slice, roadmap, Plate
-
-**Plate Projection**:
-The Trello card that makes one current GitHub-backed Slice visible on Plate. It links reciprocally to its canonical Slice Record and exists only while that Slice is current.
-_Avoid_: Canonical Slice, copy, delivery issue
 
 **Pantry**:
 The collection of possible Cakes that have not been admitted to the active portfolio. Pantry Cakes may still be vague, incomplete, or merely aspirational.
@@ -37,15 +21,19 @@ The capacity-limited active portfolio of mature Cakes. It contains only Cakes, e
 _Avoid_: Projects board, project list, Slice list
 
 **Plate**:
-The capacity-limited view and authority for current Slices. It contains only current Trello canonical Slice cards or current Plate Projections; inactive Slices do not occupy it.
-_Avoid_: Slice Registry, backlog, next queue
+The capacity-limited view and authority for current Slices. A Trello Slice sits there directly; a GitHub Slice uses a small linked Trello card while it is current. Inactive Slices do not occupy it.
+_Avoid_: Backlog, next queue
 
 **Next Slice**:
-The single validated canonical Slice Record linked by a waiting Cake as its next pull-ready candidate. It is mutually exclusive with Current Slices.
+The single validated Slice linked by a waiting Cake as its next pull-ready candidate. It is mutually exclusive with Current Slices.
 _Avoid_: Current Slice, slice queue
 
+**Available Slice**:
+A valid inactive Slice that could be eaten later. It is neither Current nor Next, and a Finished or Abandoned Slice is not available.
+_Avoid_: Slice history, Current Slice, Next Slice
+
 **Cake–Slice Link**:
-The stable link from a Slice Record to its parent Cake together with the Cake's derived Slice Index, Current Slices, and Next Slice navigation. These links expose relationships but never decide currentness.
+The stable link from a Slice to its parent Cake together with the Cake's Current, Next, and Available Slice navigation. These links expose relationships but never decide currentness.
 _Avoid_: UUID, copied status, alternate source of truth
 
 **Being Eaten**:
@@ -65,7 +53,7 @@ A Cake whose intended change or Direction has genuinely ended. Finishing a Cake 
 _Avoid_: Parked, archived
 
 **Paused Slice**:
-A Slice removed from Plate while remaining available for future nomination in its Slice Registry.
+A Slice removed from Plate while remaining available for its Cake to eat later.
 _Avoid_: Parked Cake, Blocked Slice
 
 **Blocked Slice**:
