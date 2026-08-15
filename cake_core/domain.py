@@ -569,6 +569,12 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
                 {"code": "invalid_cake_repository", "cake": cake_reference, "repository": repository}
             )
 
+        description = str((cake.get("raw") or {}).get("desc") or "")
+        if cake.get("state") != "archived" and "Slice index" in _parse_fields(
+            description, ("Slice index",)
+        ):
+            warnings.append({"code": "legacy_slice_index", "cake": cake_reference})
+
         stored_available = list(cake.get("available_slices") or [])
         invalid_available_links = [
             reference
