@@ -1,6 +1,6 @@
 ---
 name: cake-doctor
-description: Check the health of the Cake system without changing it. Use when auditing Cake, detecting consequences of manually added or moved cards or issues, validating Current, Previous, Next, and Available Slice navigation, Plate links, and cross-links, checking visible WIP limits and Capacity Constraints, or deciding which repair skill should take over. Route portfolio membership and priority judgment to cake-prioritise and Slice repair to cake-slice.
+description: Check the health of the Cake system without changing it. Use when auditing Cake, detecting consequences of manually added or moved cards or issues, validating Current, Previous, Next, and Available Slice navigation, Plate links, and cross-links, checking visible WIP limits and Rhythms, or deciding which repair skill should take over. Route portfolio membership and priority judgment to cake-prioritise and Slice repair to cake-slice.
 ---
 
 # Cake Doctor
@@ -23,7 +23,7 @@ Read `../../CONTEXT.md` completely before acting. Trello is the portfolio interf
 - Every Cake being eaten links to exactly its current Plate cards. Every waiting Cake has one valid canonical Next Slice. Parent and Plate links use clickable Trello short URLs; canonical GitHub Slice links use issue URLs.
 - Archived Slices may point to archived historical Cakes. Archived Cakes do not appear in normal portfolio choices and are never treated as active membership.
 - Visible `/N` suffixes are respected. The Eating limit covers all current Plate work, including Blocked Slices. A separate Blocked suffix, if present, is also checked.
-- Capacity Constraint cards have Cadence, Load, and Supports, but do not consume Cake Stand or Plate WIP.
+- Rhythm cards have Cadence, Load, and Supports, but do not consume Cake Stand or Plate WIP.
 
 ## Human-interface rule
 

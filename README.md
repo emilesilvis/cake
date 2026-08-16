@@ -12,7 +12,7 @@ Cake is a small personal portfolio system. It separates enduring things you care
 | **Cake Stand** | Cakes | Your capacity-limited active portfolio |
 | **Plate** | Current Slices | The bounded outcomes consuming attention now |
 
-**Capacity Constraints** describe recurring commitments that reduce available attention. They are planning inputs, not a fourth place or portfolio members, and do not consume Cake Stand or Plate WIP. A Trello setup may keep their cards in an auxiliary `Rhythms / capacity` list.
+**Rhythms** are recurring practices, appointments, or obligations that consume capacity. They are planning inputs, not a fourth place or portfolio members, and do not consume Cake Stand or Plate WIP. A Trello setup may keep their cards in an auxiliary `Rhythms` list.
 
 A Cake can sit on the Cake Stand without being actively eaten: it is active but waiting, and must name one **Next Slice**. A Slice lives in a GitHub issue when its Cake names a repository; otherwise it lives in a Trello card. Plate contains only current work. If any of a Cake's Slices is current, the Cake must be on the Stand.
 
@@ -34,14 +34,14 @@ Clone the whole repository so all three skills can use the shared `cake_core` mo
 Pantry, Cake Stand, and Plate are configurable Trello boards:
 
 - Pantry contains only Cakes that are not yet active.
-- The Cake Stand board holds Cakes across `On the stand`, `Parked`, and `Finished`; only `On the stand` is active portfolio membership. The board may also host an auxiliary `Rhythms / capacity` list whose cards are planning inputs, not Cake Stand members.
+- The Cake Stand board holds Cakes across `On the stand`, `Parked`, and `Finished`; only `On the stand` is active portfolio membership. The board may also host an auxiliary `Rhythms` list whose cards are planning inputs, not Cake Stand members.
 - Plate is the source of truth for current work. It is not a backlog or a list of every Slice.
 
 Parked is for a still-valid Cake that may return. A superseded or misclassified Cake card may instead be archived after all of its Slices have left current Plate work. Archived Cake cards are read only to keep historical Slice parent links valid; they stay out of normal portfolio views and choices.
 
 Suggested Trello list names show their WIP limits directly:
 
-- Cake Stand board: `On the stand /3`, `Parked`, `Finished`; optionally, an auxiliary `Rhythms / capacity` list
+- Cake Stand board: `On the stand /3`, `Parked`, `Finished`; optionally, an auxiliary `Rhythms` list
 - Plate: `Eating /2`, `Blocked`
 
 The configuration accepts stable Trello list IDs, so display names and WIP suffixes may change without breaking the tooling.
@@ -56,6 +56,7 @@ python3 scripts/portfolio.py config set \
   --pantry-board 'Pantry' \
   --cake-stand-board 'Cake Stand' \
   --plate-board 'Plate' \
+  --timezone 'Europe/Amsterdam' \
   --priority 'The change that matters most now'
 ```
 
@@ -104,7 +105,7 @@ Disposition: Current
 
 The issue's `Plate:` link and the projection's `Slice:` link are reciprocal. On Pause, Finish, or Abandon, the projection is archived and the issue loses its Plate link. Paused issues stay open; Finished and Abandoned issues close. A Trello-only Slice simply reopens or archives its canonical card.
 
-A Capacity Constraint may use this lightweight card contract:
+A Rhythm may use this lightweight card contract:
 
 ```text
 Cadence: When it recurs
@@ -112,7 +113,21 @@ Load: How much attention it normally consumes
 Supports: The continuing benefit or Cake it supports
 ```
 
-Completing one occurrence of a Capacity Constraint does not create a Slice; it simply recurs. A bounded effort to establish or materially change the rhythm may still be a Cake with finishable Slices.
+Completing one occurrence of a Rhythm does not create a Slice; it simply recurs. A bounded effort to establish or materially change a Rhythm may still be a Cake with finishable Slices.
+
+Cake quantifies conservative daily and weekly loads from contracts such as `Two sessions per week`, `Four one-hour sessions per week`, and `One 30-minute session, six times per week`. A snapshot adds a `progress` report with the exact local period plus target, completed, and remaining load. Weeks run Monday through Sunday in the configured timezone, or the system timezone when none is configured.
+
+Cake tracks occurrences with one tool-managed checklist on each Rhythm card. The checklist is named `Cake · <current period>`; its items are named days when Cadence supplies exact days, or numbered occurrences otherwise. Check an item to complete that occurrence. Cake reads the boxes directly—there is no separate occurrence history.
+
+Prepare or roll over those checklists with a safe preview/apply pair:
+
+```bash
+python3 skills/cake-prioritise/scripts/portfolio.py rhythms sync
+python3 skills/cake-prioritise/scripts/portfolio.py rhythms sync \
+  --apply-token '<token from the preview>'
+```
+
+The first command never writes. It shows every checklist creation, rename, item reconciliation, and rollover reset and binds the approval token to those exact changes. The second command applies them only if the preview is still current. Cake never resets boxes during the current period. On the first approved sync in a new period, it reuses the managed checklist, changes its period name, and resets its occurrences.
 
 Trello is intentionally the portfolio interface. A Cake's Slices live in GitHub when it names a repository and in Trello otherwise. The helpers do not add health cards, audit comments, timestamps, UUID cross-links, or parallel status metadata. They use visible lists, short contracts, clickable links, and native archives or issue state.
 

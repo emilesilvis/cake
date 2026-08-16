@@ -68,9 +68,9 @@ _Avoid_: Paused Slice
 A Slice deliberately ended without claiming its Success condition was met, because it became unnecessary, invalid, or superseded.
 _Avoid_: Finished Slice, Paused Slice
 
-**Capacity Constraint**:
-A recurring rhythm, appointment, or obligation that consumes attention without independently creating a lasting portfolio outcome. It can support a Cake without becoming a Cake or Slice.
-_Avoid_: Habit Cake, recurring Slice, routine Slice
+**Rhythm**:
+A recurring practice, appointment, or obligation that consumes capacity without independently creating a lasting portfolio outcome. It can support a Cake without becoming a Cake or Slice, and its current-period progress is visible through recurring checklist items.
+_Avoid_: Capacity Constraint, Habit Cake, recurring Slice, routine Slice
 
 **Task**:
 An execution action inside a Slice. A Task does not independently occupy Pantry, Cake Stand, or Plate.

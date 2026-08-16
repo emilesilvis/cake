@@ -94,7 +94,7 @@ def _trello_identifier(value: str, kind: str) -> str | None:
 
 
 class TrelloAdapter:
-    """Trello adapter for Pantry, Cake Stand, Plate, and capacity records."""
+    """Trello adapter for Pantry, Cake Stand, Plate, and Rhythm records."""
 
     def __init__(self, credentials_path: Path = TRELLO_CREDENTIALS_PATH):
         self.credentials_path = credentials_path
@@ -227,6 +227,15 @@ class TrelloAdapter:
             {"idBoard": board_id, "name": name.strip(), "pos": position},
         )
 
+    def update_list(self, list_id: str, *, name: str) -> dict[str, Any]:
+        if not name.strip():
+            raise CakeError("A Trello list needs a name")
+        return self.request(
+            "PUT",
+            f"/lists/{parse.quote(list_id, safe='')}",
+            {"name": name.strip()},
+        )
+
     def update_card(self, card_id: str, **changes: Any) -> dict[str, Any]:
         payload_by_name = {
             "name": "name",
@@ -248,6 +257,59 @@ class TrelloAdapter:
             return {"list_limits_plugin_present": None}
         names = [plugin.get("name", "") for plugin in plugins]
         return {"list_limits_plugin_present": any(normalize(name) == "list limits" for name in names)}
+
+    def checklists(self, card_id: str) -> list[dict[str, Any]]:
+        """Return complete checklist state for one card."""
+
+        value = parse.quote(card_id, safe="")
+        return self.request(
+            "GET",
+            f"/cards/{value}/checklists?checkItems=all&checkItem_fields=name,state,pos"
+            "&fields=name,pos",
+        )
+
+    def create_checklist(self, card_id: str, *, name: str) -> dict[str, Any]:
+        return self.request(
+            "POST",
+            f"/cards/{parse.quote(card_id, safe='')}/checklists",
+            {"name": name, "pos": "bottom"},
+        )
+
+    def update_checklist(self, checklist_id: str, *, name: str) -> dict[str, Any]:
+        return self.request(
+            "PUT",
+            f"/checklists/{parse.quote(checklist_id, safe='')}",
+            {"name": name},
+        )
+
+    def create_check_item(self, checklist_id: str, *, name: str) -> dict[str, Any]:
+        return self.request(
+            "POST",
+            f"/checklists/{parse.quote(checklist_id, safe='')}/checkItems",
+            {"name": name, "pos": "bottom"},
+        )
+
+    def update_check_item(
+        self,
+        card_id: str,
+        item_id: str,
+        *,
+        name: str,
+        state: str,
+    ) -> dict[str, Any]:
+        return self.request(
+            "PUT",
+            f"/cards/{parse.quote(card_id, safe='')}/checkItem/"
+            f"{parse.quote(item_id, safe='')}",
+            {"name": name, "state": state},
+        )
+
+    def delete_check_item(self, card_id: str, item_id: str) -> None:
+        self.request(
+            "DELETE",
+            f"/cards/{parse.quote(card_id, safe='')}/checkItem/"
+            f"{parse.quote(item_id, safe='')}",
+        )
 
 
 def github_issue_parts(reference: str) -> tuple[str, int]:

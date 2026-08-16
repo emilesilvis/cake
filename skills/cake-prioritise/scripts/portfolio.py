@@ -42,7 +42,10 @@ def plan_value(value: str) -> dict[str, Any]:
     policies = plan.get("capacity_policies", [])
     if not isinstance(policies, list):
         raise CakeError("capacity_policies must be a JSON list")
-    return {"operations": plan["operations"], "capacity_policies": policies}
+    return {
+        "operations": plan["operations"],
+        "capacity_policies": policies,
+    }
 
 
 def config_set(args: argparse.Namespace) -> dict[str, Any]:
@@ -53,9 +56,10 @@ def config_set(args: argparse.Namespace) -> dict[str, Any]:
             args.cake_stand_board,
             args.plate_board,
             args.priority,
+            args.timezone,
             args.cake_stand_lists,
             args.plate_lists,
-            args.capacity_sources,
+            args.rhythm_sources,
         )
     )
     if not supplied:
@@ -70,26 +74,27 @@ def config_set(args: argparse.Namespace) -> dict[str, Any]:
         if args.plate_lists is not None
         else None
     )
-    capacity_sources = (
-        json_value(args.capacity_sources, "capacity sources")
-        if args.capacity_sources is not None
+    rhythm_sources = (
+        json_value(args.rhythm_sources, "Rhythm sources")
+        if args.rhythm_sources is not None
         else None
     )
     if stand_lists is not None and not isinstance(stand_lists, dict):
         raise CakeError("Cake Stand lists must be a JSON object")
     if plate_lists is not None and not isinstance(plate_lists, dict):
         raise CakeError("Plate lists must be a JSON object")
-    if capacity_sources is not None and not isinstance(capacity_sources, list):
-        raise CakeError("Capacity sources must be a JSON list")
+    if rhythm_sources is not None and not isinstance(rhythm_sources, list):
+        raise CakeError("Rhythm sources must be a JSON list")
     updated = configure(
         load_config(CONFIG_PATH),
         pantry_board=args.pantry_board,
         cake_stand_board=args.cake_stand_board,
         plate_board=args.plate_board,
         priority=args.priority,
+        timezone=args.timezone,
         cake_stand_lists=stand_lists,
         plate_lists=plate_lists,
-        capacity_sources=capacity_sources,
+        rhythm_sources=rhythm_sources,
     )
     save_config(updated, CONFIG_PATH)
     return CakePortfolio(config=updated, config_path=CONFIG_PATH).status()
@@ -99,7 +104,10 @@ def add_plan(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--plan",
         required=True,
-        help="JSON plan or @path containing operations and optional capacity_policies",
+        help=(
+            "JSON plan or @path containing operations and optional "
+            "capacity_policies"
+        ),
     )
 
 
@@ -115,12 +123,20 @@ def build_parser() -> argparse.ArgumentParser:
     set_parser.add_argument("--cake-stand-board")
     set_parser.add_argument("--plate-board")
     set_parser.add_argument("--priority")
+    set_parser.add_argument("--timezone")
     set_parser.add_argument("--cake-stand-lists")
     set_parser.add_argument("--plate-lists")
-    set_parser.add_argument("--capacity-sources")
+    set_parser.add_argument("--rhythm-sources")
 
     snapshot = subparsers.add_parser("snapshot")
     snapshot.add_argument("--without-candidates", action="store_true")
+
+    rhythms = subparsers.add_parser("rhythms")
+    rhythm_subparsers = rhythms.add_subparsers(
+        dest="rhythm_command", required=True
+    )
+    rhythm_sync = rhythm_subparsers.add_parser("sync")
+    rhythm_sync.add_argument("--apply-token")
 
     create_cake = subparsers.add_parser("create-cake")
     create_cake.add_argument("--name", required=True)
@@ -150,7 +166,13 @@ def main() -> int:
         else:
             portfolio = CakePortfolio(config_path=CONFIG_PATH)
             if args.command == "snapshot":
-                result = portfolio.snapshot(include_candidates=not args.without_candidates)
+                result = portfolio.snapshot(
+                    include_candidates=not args.without_candidates,
+                )
+            elif args.command == "rhythms":
+                result = portfolio.sync_rhythm_checklists(
+                    confirmation_token=args.apply_token
+                )
             elif args.command == "create-cake":
                 result = portfolio.create_cake(
                     name=args.name,

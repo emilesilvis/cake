@@ -421,11 +421,22 @@ class CakeSlicer:
             "slice": _slice_ref(current),
             **target,
         }
+        projection_write = None
+        if current.get("adapter") == "github" and current.get("plate"):
+            projection = self.portfolio._current_record(snapshot, current["plate"])
+            if projection.get("name") != target["title"]:
+                projection_write = {
+                    "action": "rename_plate_projection",
+                    "card": projection["id"],
+                    "from": projection.get("name"),
+                    "to": target["title"],
+                }
         payload = {
             "operation": "update_slice",
             "parent": _parent_state(cake),
             "source": current,
             "write": write,
+            "projection_write": projection_write,
         }
         return {"status": "preview", "confirmation_token": token_for(payload), **payload}
 
@@ -458,6 +469,17 @@ class CakeSlicer:
             updated = self.portfolio.github.update_issue(
                 write["slice"], title=write["title"], body=write["body"]
             )
+            projection_write = preview.get("projection_write")
+            if projection_write:
+                try:
+                    self.portfolio.trello.update_card(
+                        projection_write["card"], name=projection_write["to"]
+                    )
+                except CakeError as exc:
+                    raise CakeError(
+                        "The Slice was updated, but its current Plate card could not be "
+                        f"renamed; reconcile it before continuing. Cause: {exc}"
+                    ) from None
         else:
             card = self.portfolio.trello.update_card(
                 source["id"], name=write["title"], description=write["body"]
@@ -470,7 +492,11 @@ class CakeSlicer:
                 "canonical_state": "archived" if card.get("closed") else "open",
                 **parse_slice_contract(card.get("desc", write["body"])),
             }
-        return {"status": "updated", "slice": updated}
+        return {
+            "status": "updated",
+            "slice": updated,
+            "plate_renamed": bool(preview.get("projection_write")),
+        }
 
     def preview_adopt(
         self,

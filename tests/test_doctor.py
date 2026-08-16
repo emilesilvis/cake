@@ -50,7 +50,7 @@ def healthy_snapshot() -> dict:
         "archived_cakes": [],
         "plate": {"eating": [current], "blocked": []},
         "slice_catalog": [candidate],
-        "capacity_constraints": [
+        "rhythms": [
             {
                 "id": "gym",
                 "url": "https://trello.com/c/gym",

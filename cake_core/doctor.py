@@ -254,10 +254,10 @@ class CakeDoctor:
                 )
         return observed, findings
 
-    def _capacity_findings(self, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    def _rhythm_findings(self, snapshot: dict[str, Any]) -> list[dict[str, Any]]:
         findings: list[dict[str, Any]] = []
         required = {"cadence", "load", "supports"}
-        for card in snapshot.get("capacity_constraints", []):
+        for card in snapshot.get("rhythms", []):
             fields = _contract_fields(str(card.get("desc") or ""))
             missing = sorted(required - fields)
             if not missing:
@@ -265,7 +265,7 @@ class CakeDoctor:
             findings.append(
                 {
                     "severity": "error",
-                    "code": "invalid_capacity_contract",
+                    "code": "invalid_rhythm_contract",
                     "message": (
                         f"“{card.get('name') or card.get('url') or card.get('id')}” is missing "
                         + ", ".join(field.title() for field in missing)
@@ -322,7 +322,7 @@ class CakeDoctor:
             )
         wip, wip_findings = self._wip(snapshot)
         findings.extend(wip_findings)
-        findings.extend(self._capacity_findings(snapshot))
+        findings.extend(self._rhythm_findings(snapshot))
         current_slices = [
             *snapshot.get("plate", {}).get("eating", []),
             *snapshot.get("plate", {}).get("blocked", []),
@@ -340,7 +340,7 @@ class CakeDoctor:
                     snapshot.get("cake_stand", {}).get("on_stand", [])
                 ),
                 "current_slices": len(current_slices),
-                "capacity_constraints": len(snapshot.get("capacity_constraints", [])),
+                "rhythms": len(snapshot.get("rhythms", [])),
                 "parked_cakes": len(snapshot.get("cake_stand", {}).get("parked", [])),
                 "archived_cakes": len(snapshot.get("archived_cakes", [])),
                 "findings": len(findings),
