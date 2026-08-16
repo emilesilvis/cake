@@ -334,7 +334,7 @@ class SlicingTest(unittest.TestCase):
             portfolio._update_cake.call_args.kwargs["available_slices"], [issue_url]
         )
 
-    def test_updating_current_github_slice_preserves_plate_backlink(self) -> None:
+    def test_updating_current_github_slice_preserves_backlink_and_renames_plate_card(self) -> None:
         cake = parent()
         cake["repository"] = "https://github.com/example/blog"
         issue_url = "https://github.com/example/blog/issues/7"
@@ -351,6 +351,12 @@ class SlicingTest(unittest.TestCase):
             }
         )
         portfolio._candidate_record.return_value = current_issue
+        portfolio._current_record.return_value = {
+            "id": "projection",
+            "url": plate_url,
+            "name": "Old title",
+            "slice": issue_url,
+        }
         portfolio.github.update_issue.return_value = {
             **current_issue,
             "name": "New title",
@@ -373,7 +379,9 @@ class SlicingTest(unittest.TestCase):
         body = portfolio.github.update_issue.call_args.kwargs["body"]
         self.assertIn("Disposition: Current", body)
         self.assertIn(f"Plate: {plate_url}", body)
-        portfolio.trello.update_card.assert_not_called()
+        portfolio.trello.update_card.assert_called_once_with(
+            "projection", name="New title"
+        )
 
     def test_repository_attachment_preserves_terminal_trello_previous_slice(self) -> None:
         cake = parent()

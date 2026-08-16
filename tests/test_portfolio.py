@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from datetime import datetime, timezone
 import unittest
 from unittest.mock import Mock, patch
 
@@ -28,7 +30,7 @@ class FakeTrello:
                 "On the stand": {"id": "on", "name": "On the stand"},
                 "Parked": {"id": "parked", "name": "Parked"},
                 "Finished": {"id": "finished", "name": "Finished"},
-                "Rhythms / capacity": {"id": "capacity", "name": "Rhythms / capacity"},
+                "Rhythms": {"id": "rhythms", "name": "Rhythms"},
             },
             "plate": {
                 "Eating": {"id": "eating", "name": "Eating"},
@@ -37,6 +39,7 @@ class FakeTrello:
         }
         self.board_cards = {"pantry": [], "stand": [], "plate": []}
         self.writes: list[tuple] = []
+        self.rhythm_checklists: dict[str, list[dict]] = {}
 
     def board(self, reference):
         return self.boards[reference]
@@ -57,6 +60,48 @@ class FakeTrello:
 
     def plugin_status(self, board):
         return {"list_limits_plugin_present": True}
+
+    def checklists(self, card_id):
+        return deepcopy(self.rhythm_checklists.get(card_id, []))
+
+    def create_checklist(self, card_id, *, name):
+        value = {"id": f"created-{card_id}", "name": name, "checkItems": []}
+        self.rhythm_checklists.setdefault(card_id, []).append(value)
+        self.writes.append((("create_checklist", card_id), {"name": name}))
+        return value
+
+    def update_checklist(self, checklist_id, *, name):
+        self.writes.append((("update_checklist", checklist_id), {"name": name}))
+        for checklists in self.rhythm_checklists.values():
+            for checklist in checklists:
+                if checklist["id"] == checklist_id:
+                    checklist["name"] = name
+                    return checklist
+        raise CakeError("missing checklist")
+
+    def create_check_item(self, checklist_id, *, name):
+        self.writes.append((("create_check_item", checklist_id), {"name": name}))
+        for checklists in self.rhythm_checklists.values():
+            for checklist in checklists:
+                if checklist["id"] == checklist_id:
+                    item = {
+                        "id": f"created-item-{len(checklist['checkItems']) + 1}",
+                        "name": name,
+                        "state": "incomplete",
+                        "pos": len(checklist["checkItems"]) + 1,
+                    }
+                    checklist["checkItems"].append(item)
+                    return item
+        raise CakeError("missing checklist")
+
+    def update_check_item(self, card_id, item_id, *, name, state):
+        self.writes.append(
+            (("update_check_item", card_id, item_id), {"name": name, "state": state})
+        )
+        return {"id": item_id, "name": name, "state": state}
+
+    def delete_check_item(self, card_id, item_id):
+        self.writes.append((("delete_check_item", card_id, item_id), {}))
 
     def update_card(self, *args, **kwargs):
         self.writes.append((args, kwargs))
@@ -116,7 +161,7 @@ def config():
                 "board": "Plate",
                 "lists": {"eating": "Eating", "blocked": "Blocked"},
             },
-            "capacity_sources": [],
+            "rhythm_sources": [],
         },
     }
 
@@ -200,7 +245,7 @@ class PortfolioTest(unittest.TestCase):
                     "One occurrence is complete",
                     "The occurrence happened",
                     disposition="abandoned",
-                    reason="Reclassified as recurring capacity",
+                    reason="Reclassified as a Rhythm",
                 ),
                 closed=True,
             )
@@ -232,32 +277,157 @@ class PortfolioTest(unittest.TestCase):
 
         self.assertEqual(trello.writes, [(('old-routine',), {"closed": True})])
 
-    def test_configured_capacity_list_can_share_the_cake_stand_board(self) -> None:
+    def test_configured_rhythm_list_can_share_the_cake_stand_board(self) -> None:
         trello = FakeTrello()
         trello.board_cards["stand"] = [
             card(
                 "gym",
                 "stand",
-                "capacity",
+                "rhythms",
                 "Gym",
                 "Cadence: Twice weekly\nLoad: Two sessions per week",
             )
         ]
         value = config()
-        value["portfolio"]["capacity_sources"] = [
+        value["portfolio"]["rhythm_sources"] = [
             {
                 "adapter": "trello",
                 "board": "Cake Stand",
-                "lists": ["Rhythms / capacity"],
+                "lists": ["Rhythms"],
             }
         ]
 
         result = CakePortfolio(config=value, trello=trello, github=FakeGitHub()).snapshot()
 
-        self.assertEqual([item["name"] for item in result["capacity_constraints"]], ["Gym"])
+        self.assertEqual([item["name"] for item in result["rhythms"]], ["Gym"])
         self.assertEqual(result["cake_stand"]["on_stand"], [])
         self.assertEqual(result["unexpected_records"], [])
         self.assertEqual(result["source_health"], [])
+
+    def test_snapshot_records_current_rhythm_checklist_state(self) -> None:
+        trello = FakeTrello()
+        trello.board_cards["stand"] = [
+            card(
+                "gym",
+                "stand",
+                "rhythms",
+                "Gym",
+                "Cadence: Twice weekly\n"
+                "Load: Two sessions per week\n"
+                "Supports: Health",
+            )
+        ]
+        trello.rhythm_checklists["gym"] = [
+            {
+                "id": "gym-week",
+                "name": "Cake · 2026-08-10–2026-08-16",
+                "checkItems": [
+                    {
+                        "id": "checked-one",
+                        "name": "Occurrence 1",
+                        "state": "complete",
+                        "pos": 1,
+                    },
+                    {
+                        "id": "unchecked-two",
+                        "name": "Occurrence 2",
+                        "state": "incomplete",
+                        "pos": 2,
+                    },
+                ],
+            }
+        ]
+        value = config()
+        value["portfolio"]["timezone"] = "Europe/Amsterdam"
+        value["portfolio"]["rhythm_sources"] = [
+            {
+                "adapter": "trello",
+                "board": "Cake Stand",
+                "lists": ["Rhythms"],
+            }
+        ]
+
+        result = CakePortfolio(config=value, trello=trello, github=FakeGitHub()).snapshot(
+            now=datetime(2026, 8, 16, 12, tzinfo=timezone.utc)
+        )
+
+        progress = result["rhythms"][0]["progress"]
+        self.assertEqual(progress["completed"]["occurrences"], 1)
+        self.assertEqual(progress["remaining"]["occurrences"], 1)
+        self.assertEqual(result["capacity"]["rhythms"][0]["progress"], progress)
+
+    def test_rhythm_sync_previews_then_applies_current_checklist_creation(self) -> None:
+        trello = FakeTrello()
+        trello.board_cards["stand"] = [
+            card(
+                "gym",
+                "stand",
+                "rhythms",
+                "Gym",
+                "Cadence: Twice weekly\n"
+                "Load: Two sessions per week\n"
+                "Supports: Health",
+            )
+        ]
+        value = config()
+        value["portfolio"]["timezone"] = "Europe/Amsterdam"
+        value["portfolio"]["rhythm_sources"] = [
+            {
+                "adapter": "trello",
+                "board": "Cake Stand",
+                "lists": ["Rhythms"],
+            }
+        ]
+        portfolio = CakePortfolio(config=value, trello=trello, github=FakeGitHub())
+
+        preview = portfolio.sync_rhythm_checklists(
+            now=datetime(2026, 8, 16, 12, tzinfo=timezone.utc)
+        )
+
+        self.assertEqual(preview["status"], "preview")
+        self.assertEqual(preview["changes"][0]["action"], "create_checklist")
+        self.assertEqual(trello.writes, [])
+
+        result = portfolio.sync_rhythm_checklists(
+            confirmation_token=preview["confirmation_token"],
+            now=datetime(2026, 8, 16, 12, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(result["status"], "synced")
+        self.assertEqual(
+            [write[0][0] for write in trello.writes],
+            ["create_checklist", "create_check_item", "create_check_item"],
+        )
+
+    def test_rhythm_sync_rejects_stale_approval_before_writing(self) -> None:
+        trello = FakeTrello()
+        trello.board_cards["stand"] = [
+            card(
+                "gym",
+                "stand",
+                "rhythms",
+                "Gym",
+                "Cadence: Twice weekly\nLoad: Two sessions per week\nSupports: Health",
+            )
+        ]
+        value = config()
+        value["portfolio"]["rhythm_sources"] = [
+            {
+                "adapter": "trello",
+                "board": "Cake Stand",
+                "lists": ["Rhythms"],
+            }
+        ]
+
+        with self.assertRaisesRegex(CakeError, "approval is stale"):
+            CakePortfolio(
+                config=value, trello=trello, github=FakeGitHub()
+            ).sync_rhythm_checklists(
+                confirmation_token="stale",
+                now=datetime(2026, 8, 16, 12, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(trello.writes, [])
 
     def test_snapshot_joins_github_slice_to_its_plate_projection(self) -> None:
         trello = FakeTrello()
@@ -624,15 +794,59 @@ class ProviderTest(unittest.TestCase):
         with patch.object(
             adapter,
             "request",
-            return_value={"id": "capacity", "name": "Rhythms / capacity"},
+            return_value={"id": "rhythms", "name": "Rhythms"},
         ) as request:
-            result = adapter.create_list("stand", name="Rhythms / capacity")
+            result = adapter.create_list("stand", name="Rhythms")
 
-        self.assertEqual(result["id"], "capacity")
+        self.assertEqual(result["id"], "rhythms")
         request.assert_called_once_with(
             "POST",
             "/lists",
-            {"idBoard": "stand", "name": "Rhythms / capacity", "pos": "bottom"},
+            {"idBoard": "stand", "name": "Rhythms", "pos": "bottom"},
+        )
+
+    def test_update_list_uses_the_trello_list_endpoint(self) -> None:
+        adapter = TrelloAdapter()
+        with patch.object(
+            adapter,
+            "request",
+            return_value={"id": "rhythms", "name": "Rhythms"},
+        ) as request:
+            result = adapter.update_list("rhythms", name="Rhythms")
+
+        self.assertEqual(result["name"], "Rhythms")
+        request.assert_called_once_with(
+            "PUT", "/lists/rhythms", {"name": "Rhythms"}
+        )
+
+    def test_rhythm_checklist_endpoints_are_explicit(self) -> None:
+        adapter = TrelloAdapter()
+        with patch.object(adapter, "request", return_value={}) as request:
+            adapter.checklists("gym")
+            adapter.create_checklist("gym", name="Cake · week")
+            adapter.update_checklist("list", name="Cake · next week")
+            adapter.create_check_item("list", name="Monday")
+            adapter.update_check_item(
+                "gym", "item", name="Monday", state="incomplete"
+            )
+            adapter.delete_check_item("gym", "item")
+
+        self.assertEqual(
+            [call.args[0] for call in request.call_args_list],
+            ["GET", "POST", "PUT", "POST", "PUT", "DELETE"],
+        )
+        self.assertEqual(
+            request.call_args_list[0].args[1],
+            "/cards/gym/checklists?checkItems=all&checkItem_fields=name,state,pos"
+            "&fields=name,pos",
+        )
+        self.assertEqual(
+            request.call_args_list[4].args,
+            (
+                "PUT",
+                "/cards/gym/checkItem/item",
+                {"name": "Monday", "state": "incomplete"},
+            ),
         )
 
 

@@ -1382,6 +1382,7 @@ def _transition_source_projection(
             add_cake(operation.get("cake"))
             add_slice(operation.get("slice"))
             include_plate_membership = True
+            include_capacity = True
         elif action == "pull":
             cake_record = add_cake(operation.get("cake"))
             add_slice(cake_record.get("next_slice") if cake_record else None)
@@ -1500,6 +1501,9 @@ def _transition_source_projection(
         "plate_membership": plate_membership,
         "collections": reordered_collections,
         "capacity": _capacity_counts(snapshot) if include_capacity else None,
+        "rhythms": (
+            snapshot.get("capacity", {}).get("rhythms") if include_capacity else None
+        ),
         "source_health": relevant_health,
     }
 

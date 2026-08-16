@@ -23,7 +23,7 @@ Read `../../CONTEXT.md` completely before acting. Produce exactly one bounded Sl
 
 A Slice must have one coherent Outcome, be independently finishable, have observable Success, advance its Cake's Direction, and include only infrastructure needed for that outcome. Add `Not included` only to resolve meaningful ambiguity. Never use an implementation checklist as the Slice contract.
 
-Reject an occurrence that merely becomes due again substantially unchanged, such as today's reviews or this week's routine sessions. That is a Task or Capacity Constraint. Establishing or materially changing a rhythm can be a Slice only when Success describes a durable change and the Slice has a genuine exit boundary.
+Reject an occurrence that merely becomes due again substantially unchanged, such as today's reviews or this week's routine sessions. That is a Task or Rhythm. Establishing or materially changing a Rhythm can be a Slice only when Success describes a durable change and the Slice has a genuine exit boundary.
 
 Uncertainty reduction can be a valid Outcome when it resolves a named risk and has observable Success.
 

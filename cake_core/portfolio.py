@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 from typing import Any
 
 from .config import CONFIG_PATH, config_status, load_config, normalized_config
+from .capacity import (
+    observe_rhythms,
+    rhythm_checklist_plan,
+)
 from .domain import (
     CakeError,
     available_slice_references,
@@ -191,19 +196,24 @@ class CakePortfolio:
             named_lists[state] = self.trello.list(board, name)
         return board, named_lists
 
-    def _capacity_context(
+    def _rhythm_context(
         self,
-    ) -> tuple[list[dict[str, Any]], set[tuple[str, str]], list[dict[str, Any]]]:
-        """Read capacity records and identify explicitly configured non-domain lists."""
+    ) -> tuple[
+        list[dict[str, Any]],
+        set[tuple[str, str]],
+        list[dict[str, Any]],
+        dict[str, list[dict[str, Any]]],
+    ]:
+        """Read Rhythm records and identify explicitly configured non-domain lists."""
 
-        constraints: list[dict[str, Any]] = []
+        rhythms: list[dict[str, Any]] = []
         memberships: set[tuple[str, str]] = set()
         health: list[dict[str, Any]] = []
-        capacity_sources = self.config.get("portfolio", {}).get("capacity_sources", [])
-        for source in capacity_sources:
+        rhythm_sources = self.config.get("portfolio", {}).get("rhythm_sources", [])
+        for source in rhythm_sources:
             if not isinstance(source, dict) or source.get("adapter") != "trello":
                 health.append(
-                    {"source": source, "status": "unsupported", "relevance": "capacity"}
+                    {"source": source, "status": "unsupported", "relevance": "rhythms"}
                 )
                 continue
             if not isinstance(source.get("board"), str) or not source["board"].strip():
@@ -211,8 +221,8 @@ class CakePortfolio:
                     {
                         "source": source,
                         "status": "unavailable",
-                        "relevance": "capacity",
-                        "error": "capacity source needs a Trello board",
+                        "relevance": "rhythms",
+                        "error": "Rhythm source needs a Trello board",
                     }
                 )
                 continue
@@ -224,8 +234,8 @@ class CakePortfolio:
                     {
                         "source": source,
                         "status": "unavailable",
-                        "relevance": "capacity",
-                        "error": "capacity source lists must be a JSON list of Trello list references",
+                        "relevance": "rhythms",
+                        "error": "Rhythm source lists must be a JSON list of Trello list references",
                     }
                 )
                 continue
@@ -237,19 +247,37 @@ class CakePortfolio:
                     allowed = {item["id"] for item in lists}
                     memberships.update((board["id"], list_id) for list_id in allowed)
                     cards = [card for card in cards if card.get("idList") in allowed]
-                constraints.extend(_compact_card(card) for card in cards)
+                rhythms.extend(_compact_card(card) for card in cards)
             except CakeError as exc:
                 health.append(
                     {
                         "source": source,
                         "status": "unavailable",
-                        "relevance": "capacity",
+                        "relevance": "rhythms",
                         "error": str(exc),
                     }
                 )
-        return constraints, memberships, health
+        checklists_by_card: dict[str, list[dict[str, Any]]] = {}
+        for card in rhythms:
+            try:
+                checklists_by_card[card["id"]] = self.trello.checklists(card["id"])
+            except CakeError as exc:
+                health.append(
+                    {
+                        "source": card.get("url") or card["id"],
+                        "status": "unavailable",
+                        "relevance": "rhythm_checklist",
+                        "error": str(exc),
+                    }
+                )
+        return rhythms, memberships, health, checklists_by_card
 
-    def snapshot(self, *, include_candidates: bool = True) -> dict[str, Any]:
+    def snapshot(
+        self,
+        *,
+        include_candidates: bool = True,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
         pantry_board, _ = self._trello_role("pantry")
         stand_board, stand_lists = self._trello_role("cake_stand")
         plate_board, plate_lists = self._trello_role("plate")
@@ -264,14 +292,27 @@ class CakePortfolio:
             self.trello.cards(plate_board), key=lambda card: card.get("pos", 0)
         )
         all_plate_cards = self.trello.cards(plate_board, include_archived=True)
-        capacity_constraints, capacity_memberships, capacity_health = self._capacity_context()
+        (
+            rhythms,
+            rhythm_memberships,
+            rhythm_health,
+            rhythm_checklists,
+        ) = self._rhythm_context()
+        timezone_name = self.config.get("portfolio", {}).get("timezone")
+        observed_at = now or datetime.now(timezone.utc)
+        rhythms = observe_rhythms(
+            rhythms,
+            rhythm_checklists,
+            now=observed_at,
+            timezone_name=timezone_name,
+        )
 
-        def is_capacity_card(card: dict[str, Any]) -> bool:
-            return (card.get("idBoard"), card.get("idList")) in capacity_memberships
+        def is_rhythm_card(card: dict[str, Any]) -> bool:
+            return (card.get("idBoard"), card.get("idList")) in rhythm_memberships
 
-        pantry_cards = [card for card in pantry_cards if not is_capacity_card(card)]
-        visible_plate_cards = [card for card in visible_plate_cards if not is_capacity_card(card)]
-        all_plate_cards = [card for card in all_plate_cards if not is_capacity_card(card)]
+        pantry_cards = [card for card in pantry_cards if not is_rhythm_card(card)]
+        visible_plate_cards = [card for card in visible_plate_cards if not is_rhythm_card(card)]
+        all_plate_cards = [card for card in all_plate_cards if not is_rhythm_card(card)]
 
         snapshot: dict[str, Any] = {
             "priority": self.config.get("portfolio", {}).get("priority"),
@@ -281,9 +322,9 @@ class CakePortfolio:
             "archived_cakes": [],
             "plate": {"eating": [], "blocked": []},
             "slice_catalog": [],
-            "capacity_constraints": capacity_constraints,
+            "rhythms": rhythms,
             "capacity": {},
-            "source_health": capacity_health,
+            "source_health": rhythm_health,
             "unexpected_records": [],
             "sources": {
                 "pantry": {
@@ -314,7 +355,7 @@ class CakePortfolio:
 
         stand_state_by_list = {item["id"]: state for state, item in stand_lists.items()}
         for card in all_stand_cards:
-            if not card.get("closed") or is_capacity_card(card):
+            if not card.get("closed") or is_rhythm_card(card):
                 continue
             former_state = stand_state_by_list.get(card.get("idList"))
             if former_state in {"on_stand", "parked", "finished"}:
@@ -323,7 +364,7 @@ class CakePortfolio:
                 snapshot["archived_cakes"].append(archived)
 
         for card in stand_cards:
-            if is_capacity_card(card):
+            if is_rhythm_card(card):
                 continue
             state = stand_state_by_list.get(card.get("idList"))
             if state not in {"on_stand", "parked", "finished"}:
@@ -489,9 +530,112 @@ class CakePortfolio:
                 "needs_current_policy_observation": True,
                 **self.trello.plugin_status(plate_board),
             },
+            "rhythms": [
+                {
+                    "id": item.get("id"),
+                    "url": item.get("url"),
+                    "name": item.get("name"),
+                    "supports": item.get("supports"),
+                    "progress": item.get("progress"),
+                }
+                for item in rhythms
+            ],
         }
         snapshot["issues"] = validate_snapshot(snapshot)
         return snapshot
+
+    def preview_rhythm_sync(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """Preview exact writes for all current-period Rhythm checklists."""
+
+        rhythms, _, health, checklists_by_card = self._rhythm_context()
+        failures = [
+            item
+            for item in health
+            if item.get("status") in {"unavailable", "unsupported"}
+        ]
+        if failures:
+            raise CakeError(
+                "Rhythm checklist sync needs every configured Rhythm source; "
+                f"{len(failures)} source read failed"
+            )
+        observed_at = now or datetime.now(timezone.utc)
+        timezone_name = self.config.get("portfolio", {}).get("timezone")
+        plans = [
+            rhythm_checklist_plan(
+                card,
+                checklists_by_card.get(card["id"], []),
+                now=observed_at,
+                timezone_name=timezone_name,
+            )
+            for card in rhythms
+        ]
+        changes = [change for plan in plans for change in plan["changes"]]
+        payload = {
+            "operation": "sync_rhythm_checklists",
+            "changes": changes,
+        }
+        result = {
+            "status": "preview" if changes else "current",
+            "plans": plans,
+            "changes": changes,
+        }
+        if changes:
+            result["confirmation_token"] = token_for(payload)
+        return result
+
+    def sync_rhythm_checklists(
+        self,
+        *,
+        confirmation_token: str | None = None,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Apply a fresh, explicitly approved Rhythm checklist sync preview."""
+
+        preview = self.preview_rhythm_sync(now=now)
+        if preview["status"] == "current" or confirmation_token is None:
+            return preview
+        changes = preview["changes"]
+        payload = {
+            "operation": "sync_rhythm_checklists",
+            "changes": changes,
+        }
+        if confirmation_token != token_for(payload):
+            raise CakeError(
+                "The approval is stale: a Rhythm contract, checklist, or period changed"
+            )
+
+        applied: list[dict[str, Any]] = []
+        try:
+            for change in changes:
+                action = change["action"]
+                if action == "create_checklist":
+                    checklist = self.trello.create_checklist(
+                        change["card"], name=change["name"]
+                    )
+                    for name in change["items"]:
+                        self.trello.create_check_item(checklist["id"], name=name)
+                elif action == "rename_checklist":
+                    self.trello.update_checklist(change["checklist"], name=change["to"])
+                elif action == "add_check_item":
+                    self.trello.create_check_item(change["checklist"], name=change["name"])
+                elif action == "update_check_item":
+                    self.trello.update_check_item(
+                        change["card"],
+                        change["item"],
+                        name=change["to"]["name"],
+                        state=change["to"]["state"],
+                    )
+                elif action == "delete_check_item":
+                    self.trello.delete_check_item(change["card"], change["item"])
+                else:
+                    raise CakeError(f"Unknown Rhythm checklist action {action!r}")
+                applied.append(change)
+        except CakeError as exc:
+            raise CakeError(
+                f"Rhythm checklist sync stopped after {len(applied)} of "
+                f"{len(changes)} changes; re-read before retrying. Cause: {exc}"
+            ) from None
+        return {"status": "synced", "changes": applied}
 
     def preview(
         self,
@@ -594,7 +738,10 @@ class CakePortfolio:
         capacity_policies: list[dict[str, Any]] | None = None,
         allow_capacity_overage: bool = False,
     ) -> dict[str, Any]:
-        preview = self.preview(operations, capacity_policies=capacity_policies)
+        preview = self.preview(
+            operations,
+            capacity_policies=capacity_policies,
+        )
         if preview["confirmation_token"] != confirmation_token:
             raise CakeError("The confirmation token is invalid or relevant source state changed")
         if preview["capacity_warnings"] and not allow_capacity_overage:

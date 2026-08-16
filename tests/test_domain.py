@@ -626,6 +626,14 @@ class TransitionTest(unittest.TestCase):
         source = snapshot([parent], [candidate])
         source["priority"] = "Publish useful work"
         source["pantry"] = [{"id": "maybe", "url": "https://trello.com/c/maybe", "name": "Maybe"}]
+        source["capacity"] = {
+            "rhythms": [
+                {
+                    "id": "gym",
+                    "progress": {"remaining": {"occurrences": 2, "unit": "session"}},
+                }
+            ]
+        }
         operation = [{"action": "pull", "cake": parent["url"]}]
         original = preview_transition(source, operation)["confirmation_token"]
 
@@ -639,6 +647,14 @@ class TransitionTest(unittest.TestCase):
         relevant_change["slice_catalog"][0]["success"] = "A different observable result"
         self.assertNotEqual(
             preview_transition(relevant_change, operation)["confirmation_token"], original
+        )
+
+        rhythm_change = deepcopy(source)
+        rhythm_change["capacity"]["rhythms"][0]["progress"]["remaining"][
+            "occurrences"
+        ] = 1
+        self.assertNotEqual(
+            preview_transition(rhythm_change, operation)["confirmation_token"], original
         )
 
     def test_closed_canonical_slice_on_plate_is_reported_as_drift(self) -> None:

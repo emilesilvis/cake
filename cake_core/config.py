@@ -28,10 +28,11 @@ def empty_config() -> dict[str, Any]:
         "version": 2,
         "portfolio": {
             "priority": None,
+            "timezone": None,
             "pantry": None,
             "cake_stand": None,
             "plate": None,
-            "capacity_sources": [],
+            "rhythm_sources": [],
         },
     }
 
@@ -57,12 +58,17 @@ def normalized_config(value: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(portfolio, dict):
             raise CakeError("Cake config portfolio must be a JSON object")
         portfolio.setdefault("priority", None)
+        portfolio.setdefault("timezone", None)
         portfolio.setdefault("pantry", None)
         portfolio.setdefault("cake_stand", None)
         portfolio.setdefault("plate", None)
-        portfolio.setdefault("capacity_sources", [])
-        if not isinstance(portfolio["capacity_sources"], list):
-            raise CakeError("Cake config capacity_sources must be a JSON list")
+        legacy_rhythm_sources = portfolio.pop("capacity_sources", None)
+        portfolio.setdefault(
+            "rhythm_sources",
+            legacy_rhythm_sources if legacy_rhythm_sources is not None else [],
+        )
+        if not isinstance(portfolio["rhythm_sources"], list):
+            raise CakeError("Cake config rhythm_sources must be a JSON list")
         return result
 
     legacy = value.get("portfolio", {}) if isinstance(value.get("portfolio"), dict) else {}
@@ -116,9 +122,10 @@ def configure(
     cake_stand_board: str | None = None,
     plate_board: str | None = None,
     priority: str | None = None,
+    timezone: str | None = None,
     cake_stand_lists: dict[str, str] | None = None,
     plate_lists: dict[str, str] | None = None,
-    capacity_sources: list[dict[str, Any]] | None = None,
+    rhythm_sources: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     config = normalized_config(value)
     config.pop("legacy", None)
@@ -137,6 +144,8 @@ def configure(
         portfolio["plate"]["lists"] = deepcopy(plate_lists)
     if priority is not None:
         portfolio["priority"] = priority.strip() or None
-    if capacity_sources is not None:
-        portfolio["capacity_sources"] = deepcopy(capacity_sources)
+    if timezone is not None:
+        portfolio["timezone"] = timezone.strip() or None
+    if rhythm_sources is not None:
+        portfolio["rhythm_sources"] = deepcopy(rhythm_sources)
     return config

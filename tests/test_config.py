@@ -31,6 +31,23 @@ class ConfigTest(unittest.TestCase):
         self.assertIsNone(config["portfolio"]["cake_stand"])
         self.assertIsNone(config["portfolio"]["plate"])
 
+    def test_timezone_can_be_configured_for_rhythm_periods(self) -> None:
+        config = configure(empty_config(), timezone="Europe/Amsterdam")
+
+        self.assertEqual(config["portfolio"]["timezone"], "Europe/Amsterdam")
+
+    def test_capacity_sources_are_read_as_legacy_rhythm_sources(self) -> None:
+        config = empty_config()
+        config["portfolio"].pop("rhythm_sources")
+        config["portfolio"]["capacity_sources"] = [{"adapter": "trello"}]
+
+        normalized = normalized_config(config)
+
+        self.assertEqual(
+            normalized["portfolio"]["rhythm_sources"], [{"adapter": "trello"}]
+        )
+        self.assertNotIn("capacity_sources", normalized["portfolio"])
+
     def test_save_is_private_and_versioned(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "cake" / "config.json"

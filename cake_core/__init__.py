@@ -1,5 +1,14 @@
 """Shared Cake domain and portfolio interface."""
 
+from .capacity import (
+    current_period,
+    observe_rhythms,
+    parse_rhythm_contract,
+    quantify_rhythm_load,
+    rhythm_checklist_plan,
+    rhythm_checklist_spec,
+    rhythm_progress,
+)
 from .doctor import CakeDoctor
 from .domain import (
     CakeError,
@@ -30,6 +39,7 @@ __all__ = [
     "CakePortfolio",
     "CakeSlicer",
     "canonical_ref",
+    "current_period",
     "format_cake_contract",
     "format_plate_projection_contract",
     "format_slice_contract",
@@ -37,11 +47,17 @@ __all__ = [
     "github_repository_url",
     "is_github_issue_url",
     "is_trello_card_url",
+    "observe_rhythms",
     "parse_cake_contract",
+    "parse_rhythm_contract",
     "parse_plate_projection_contract",
     "parse_slice_contract",
     "previous_slice_reference",
     "preview_transition",
+    "quantify_rhythm_load",
+    "rhythm_checklist_plan",
+    "rhythm_checklist_spec",
+    "rhythm_progress",
     "token_for",
     "trello_card_short_link",
     "trello_card_url",

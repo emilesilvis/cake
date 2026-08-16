@@ -39,6 +39,15 @@ class SkillInstructionTest(unittest.TestCase):
         self.assertIn("attach-repository", skill)
         self.assertIn('subparsers.add_parser("attach-repository")', helper)
 
+    def test_prioritisation_manages_and_reports_current_rhythm_checklists(self) -> None:
+        skill = (
+            REPOSITORY_ROOT / "skills" / "cake-prioritise" / "SKILL.md"
+        ).read_text()
+
+        self.assertIn("completed and remaining load", skill)
+        self.assertIn("rhythms sync", skill)
+        self.assertIn("--apply-token", skill)
+
 
 if __name__ == "__main__":
     unittest.main()
