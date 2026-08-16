@@ -69,7 +69,7 @@ A Slice deliberately ended without claiming its Success condition was met, becau
 _Avoid_: Finished Slice, Paused Slice
 
 **Rhythm**:
-A recurring practice, appointment, or obligation that consumes capacity without independently creating a lasting portfolio outcome. It can support a Cake without becoming a Cake or Slice, and its current-period progress is visible through recurring checklist items.
+A recurring practice, appointment, or obligation that consumes capacity without independently creating a lasting portfolio outcome. It can support a Cake without becoming a Cake or Slice. All Rhythm progress is reviewed on a Monday–Sunday week; a daily cadence produces seven named day items that may be checked together at week's end.
 _Avoid_: Capacity Constraint, Habit Cake, recurring Slice, routine Slice
 
 **Task**:
