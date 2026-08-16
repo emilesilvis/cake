@@ -5,7 +5,7 @@ Cake is a personal portfolio system for deciding which enduring pursuits deserve
 ## Language
 
 **Cake**:
-A portfolio-level pursuit or direction that can yield one or more Slices. Its Trello card shows what is Current or Next while active and every other Slice still available to eat.
+A portfolio-level pursuit or direction that can yield one or more Slices. Its Trello card shows what is Current or Next while active, what was Previous while parked, and every other Slice still available to eat.
 _Avoid_: Project, task, initiative
 
 **Slice**:
@@ -28,12 +28,16 @@ _Avoid_: Backlog, next queue
 The single validated Slice linked by a waiting Cake as its next pull-ready candidate. It is mutually exclusive with Current Slices.
 _Avoid_: Current Slice, slice queue
 
+**Previous Slice**:
+The most recent Slice to leave the Plate when its Cake was parked. It is derived historical context, not a current commitment or a candidate to eat.
+_Avoid_: Next Slice, Available Slice, Slice history
+
 **Available Slice**:
 A valid inactive Slice that could be eaten later. It is neither Current nor Next, and a Finished or Abandoned Slice is not available.
 _Avoid_: Slice history, Current Slice, Next Slice
 
 **Cake–Slice Link**:
-The stable link from a Slice to its parent Cake together with the Cake's Current, Next, and Available Slice navigation. These links expose relationships but never decide currentness.
+The stable link from a Slice to its parent Cake together with the Cake's Current, Previous, Next, and Available Slice navigation. These links expose relationships but never decide currentness.
 _Avoid_: UUID, copied status, alternate source of truth
 
 **Being Eaten**:

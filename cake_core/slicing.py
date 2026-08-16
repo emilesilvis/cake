@@ -15,6 +15,7 @@ from .domain import (
     github_repository_name,
     github_repository_url,
     normalize,
+    previous_slice_reference,
     parse_slice_contract,
     token_for,
 )
@@ -40,6 +41,7 @@ def _parent_state(cake: dict[str, Any]) -> dict[str, Any]:
             "slice_index",
             "current_slice_links",
             "current_slices",
+            "previous_slice",
             "next_slice",
             "available_slices",
             "raw",
@@ -61,8 +63,12 @@ def _cake_body(
     repository: str | None = None,
     available_slices: list[str] | None = None,
     next_slice: str | None | object = ...,
+    previous_slice: str | None | object = ...,
 ) -> str:
     effective_next = cake.get("next_slice") if next_slice is ... else next_slice
+    effective_previous = (
+        cake.get("previous_slice") if previous_slice is ... else previous_slice
+    )
     return format_cake_contract(
         cake.get("direction") or "",
         effective_next if isinstance(effective_next, str) else None,
@@ -72,6 +78,7 @@ def _cake_body(
         available_slices
         if available_slices is not None
         else list(cake.get("available_slices") or []),
+        effective_previous if isinstance(effective_previous, str) else None,
         trello_markdown=True,
     )
 
@@ -162,11 +169,19 @@ class CakeSlicer:
             snapshot.get("slice_catalog", []),
             current_references=(str(value) for value in current_references if value),
         )
+        target_previous = previous_slice_reference(
+            cake, snapshot.get("slice_catalog", [])
+        )
         write = {
             "action": "sync_cake_available_slices",
             "cake": _card_ref(cake),
             "available_slices": target_available,
-            "target_body": _cake_body(cake, available_slices=target_available),
+            "previous_slice": target_previous,
+            "target_body": _cake_body(
+                cake,
+                available_slices=target_available,
+                previous_slice=target_previous,
+            ),
         }
         payload = {
             "operation": "sync_available_slices",
@@ -184,12 +199,15 @@ class CakeSlicer:
         if confirmation_token != preview["confirmation_token"]:
             raise CakeError("The approval is stale: the Cake or its Slices changed")
         self.portfolio._update_cake(
-            preview["parent"], available_slices=preview["write"]["available_slices"]
+            preview["parent"],
+            available_slices=preview["write"]["available_slices"],
+            previous_slice=preview["write"]["previous_slice"],
         )
         return {
             "status": "synced",
             "cake": preview["write"]["cake"],
             "available_slices": preview["write"]["available_slices"],
+            "previous_slice": preview["write"]["previous_slice"],
         }
 
     @staticmethod

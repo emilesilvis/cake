@@ -545,6 +545,56 @@ class PortfolioTest(unittest.TestCase):
         self.assertNotIn("**Current slices:**", cake_write["description"])
         self.assertNotIn("**Available slices:**", cake_write["description"])
 
+    def test_exit_to_parked_writes_the_finished_slice_as_previous(self) -> None:
+        trello = FakeTrello()
+        cake_url = "https://trello.com/c/wolf-tone"
+        slice_url = "https://trello.com/c/extract-zachlab"
+        trello.board_cards["stand"] = [
+            card(
+                "wolf-tone",
+                "stand",
+                "on",
+                "Wolf Tone",
+                format_cake_contract(
+                    "Build a deep musical Zachlike",
+                    current_slices=[slice_url],
+                ),
+            )
+        ]
+        trello.board_cards["plate"] = [
+            card(
+                "extract-zachlab",
+                "plate",
+                "eating",
+                "Wolf Tone: Extract Zachlab",
+                format_slice_contract(
+                    cake_url,
+                    "Zachlab is extracted",
+                    "One command reproduces a bounded result",
+                    disposition="current",
+                ),
+            )
+        ]
+        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
+
+        portfolio._execute(
+            {
+                "action": "exit",
+                "plate_slice": slice_url,
+                "disposition": "finished",
+                "cake_state": "parked",
+            }
+        )
+
+        cake_write = trello.writes[1][1]
+        self.assertIn(
+            "**Previous slice:** https://trello.com/c/extract-zachlab",
+            cake_write["description"],
+        )
+        self.assertNotIn("**Current slices:**", cake_write["description"])
+        self.assertNotIn("**Next slice:**", cake_write["description"])
+        self.assertEqual(cake_write["list_id"], "parked")
+
     def test_apply_rejects_stale_confirmation_before_writing(self) -> None:
         portfolio = CakePortfolio(config=config(), trello=FakeTrello(), github=FakeGitHub())
         with patch.object(

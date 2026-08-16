@@ -19,6 +19,7 @@ def parent():
         "slice_index": [],
         "current_slice_links": [],
         "current_slices": [],
+        "previous_slice": None,
         "next_slice": None,
         "available_slices": [],
         "raw": {
@@ -108,6 +109,42 @@ class SlicingTest(unittest.TestCase):
         self.assertEqual(
             portfolio._update_cake.call_args.kwargs["available_slices"],
             ["https://trello.com/c/one", "https://trello.com/c/two"],
+        )
+
+    def test_sync_available_repairs_previous_slice_navigation_for_a_parked_cake(self) -> None:
+        cake = parent()
+        cake["state"] = "parked"
+        finished = {
+            "id": "finished",
+            "url": "https://trello.com/c/finished",
+            "name": "Blog: Finished result",
+            "adapter": "plate",
+            "cake": cake["url"],
+            "outcome": "A result exists",
+            "success": "The result is observable",
+            "disposition": "finished",
+            "raw": {
+                "shortLink": "finished",
+                "dateLastActivity": "2026-08-16T09:00:00.000Z",
+            },
+        }
+        portfolio = portfolio_for(cake)
+        portfolio.snapshot.return_value = {"slice_catalog": [finished], "plate": {}}
+        slicer = CakeSlicer(portfolio)
+
+        preview = slicer.sync_available(cake["url"])
+
+        self.assertEqual(preview["write"]["previous_slice"], finished["url"])
+        self.assertIn(
+            "**Previous slice:** https://trello.com/c/finished",
+            preview["write"]["target_body"],
+        )
+        slicer.sync_available(
+            cake["url"], confirmation_token=preview["confirmation_token"]
+        )
+        self.assertEqual(
+            portfolio._update_cake.call_args.kwargs["previous_slice"],
+            finished["url"],
         )
 
     def test_adopt_previews_assigning_a_parent_without_changing_membership(self) -> None:

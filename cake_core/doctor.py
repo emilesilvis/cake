@@ -66,6 +66,7 @@ def _handoff_for(code: str) -> str | None:
         "invalid_cake_repository",
         "invalid_available_slice_links",
         "available_slices_drift",
+        "previous_slice_drift",
         "legacy_slice_index",
         "slice_registry_mismatch",
         "legacy_delivery_link",
@@ -83,6 +84,8 @@ def _handoff_for(code: str) -> str | None:
         "waiting_without_next_slice",
         "invalid_next_slice_link",
         "invalid_next_slice",
+        "invalid_previous_slice_link",
+        "previous_slice_on_non_parked_cake",
         "current_cake_has_queued_slice",
         "next_slice_is_current",
         "invalid_slice_parent",
@@ -140,6 +143,15 @@ def _finding_for_issue(
         ),
         "available_slices_drift": (
             f"{cake_name} does not show exactly the other Slices available to eat."
+        ),
+        "invalid_previous_slice_link": (
+            f"{cake_name} contains a non-clickable Previous Slice link."
+        ),
+        "previous_slice_on_non_parked_cake": (
+            f"{cake_name} shows a Previous Slice even though it is not parked."
+        ),
+        "previous_slice_drift": (
+            f"{cake_name} does not show the most recent Slice from before it was parked."
         ),
         "legacy_slice_index": (
             f"{cake_name} still shows old Slice history instead of only what is Current, Next, or Available."
