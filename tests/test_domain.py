@@ -225,6 +225,25 @@ class ContractTest(unittest.TestCase):
                 previous_slice="https://trello.com/c/previous",
             )
 
+    def test_repository_attachment_keeps_terminal_trello_history_valid(self) -> None:
+        parent = cake("cake", repository="https://github.com/example/cake")
+        parent["state"] = "parked"
+        finished = slice_record("previous", parent, disposition="finished")
+        parent["previous_slice"] = finished["url"]
+        source = {
+            "pantry": [],
+            "cake_stand": {
+                "on_stand": [],
+                "parked": [parent],
+                "finished": [],
+            },
+            "plate": {"eating": [], "blocked": []},
+            "slice_catalog": [finished],
+            "source_health": [],
+        }
+
+        self.assertEqual(validate_snapshot(source), {"errors": [], "warnings": []})
+
     def test_trello_full_and_short_urls_are_the_same_reference(self) -> None:
         self.assertEqual(
             canonical_ref("https://trello.com/c/AbC123xy/a-card-title"),

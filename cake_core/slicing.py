@@ -563,6 +563,97 @@ class CakeSlicer:
         }
         return {"status": "adopted", "slice": adopted}
 
+    def preview_attach_repository(
+        self, cake_reference: str, *, repository: str
+    ) -> dict[str, Any]:
+        snapshot, cake = self._snapshot_and_cake(cake_reference)
+        repository_name = github_repository_name(repository)
+        if not repository_name:
+            raise CakeError(
+                "Repository attachment needs a GitHub repository URL or owner/repository"
+            )
+        existing_repository = github_repository_name(cake.get("repository"))
+        if (
+            existing_repository
+            and existing_repository.casefold() != repository_name.casefold()
+        ):
+            raise CakeError("The Cake already uses a different GitHub Slice repository")
+        self._assert_registry_available(snapshot, cake)
+        live_trello = [
+            item
+            for item in snapshot.get("slice_catalog", [])
+            if item.get("adapter") == "plate"
+            and item.get("cake")
+            and _record_matches(cake, item["cake"])
+            and normalize(item.get("disposition", "candidate"))
+            not in TERMINAL_SLICE_DISPOSITIONS
+        ]
+        if live_trello:
+            raise CakeError(
+                "Migrate every unfinished Trello Slice before attaching a repository"
+            )
+
+        github_slices = [
+            item
+            for item in self.portfolio.github.slices(repository_name)
+            if item.get("cake") and _record_matches(cake, item["cake"])
+        ]
+        target_repository = github_repository_url(repository_name)
+        target_cake = {**cake, "repository": target_repository}
+        catalog = [*snapshot.get("slice_catalog", []), *github_slices]
+        target_available = available_slice_references(target_cake, catalog)
+        target_previous = previous_slice_reference(target_cake, catalog)
+        write = {
+            "action": "attach_cake_repository",
+            "cake": _card_ref(cake),
+            "repository": target_repository,
+            "available_slices": target_available,
+            "previous_slice": target_previous,
+            "target_body": _cake_body(
+                cake,
+                repository=repository_name,
+                available_slices=target_available,
+                previous_slice=target_previous,
+            ),
+        }
+        payload = {
+            "operation": "attach_cake_repository",
+            "parent": _parent_state(cake),
+            "write": write,
+        }
+        return {"status": "preview", "confirmation_token": token_for(payload), **payload}
+
+    def attach_repository(
+        self,
+        cake_reference: str,
+        *,
+        repository: str,
+        confirmation_token: str | None = None,
+    ) -> dict[str, Any]:
+        preview = self.preview_attach_repository(
+            cake_reference, repository=repository
+        )
+        if confirmation_token is None:
+            return preview
+        if confirmation_token != preview["confirmation_token"]:
+            raise CakeError(
+                "The approval is stale: the Cake, repository, or Slice history changed"
+            )
+        write = preview["write"]
+        self.portfolio._update_cake(
+            preview["parent"],
+            repository=write["repository"],
+            available_slices=write["available_slices"],
+            previous_slice=write["previous_slice"],
+        )
+        return {
+            "status": "attached",
+            "cake": write["cake"],
+            "repository": write["repository"],
+            "available_slices": write["available_slices"],
+            "previous_slice": write["previous_slice"],
+        }
+
     def preview_migrate_to_github(
         self,
         cake_reference: str,
@@ -590,6 +681,8 @@ class CakeSlicer:
             and item.get("adapter") == "plate"
             and item.get("cake")
             and _record_matches(cake, item["cake"])
+            and normalize(item.get("disposition", "candidate"))
+            not in TERMINAL_SLICE_DISPOSITIONS
         ]
         if other_trello:
             raise CakeError("Migrate all of this Cake's Trello Slices together before changing its registry")

@@ -30,6 +30,15 @@ class SkillInstructionTest(unittest.TestCase):
         self.assertIn("Previous slice:", slicing)
         self.assertIn("Previous Slice", doctor)
 
+    def test_repository_attachment_has_a_safe_previewable_protocol(self) -> None:
+        skill = (REPOSITORY_ROOT / "skills" / "cake-slice" / "SKILL.md").read_text()
+        helper = (
+            REPOSITORY_ROOT / "skills" / "cake-slice" / "scripts" / "slice.py"
+        ).read_text()
+
+        self.assertIn("attach-repository", skill)
+        self.assertIn('subparsers.add_parser("attach-repository")', helper)
+
 
 if __name__ == "__main__":
     unittest.main()

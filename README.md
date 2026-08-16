@@ -79,6 +79,8 @@ Available slices: <canonical Trello card or GitHub issue URL>
 
 `Current slices` appears only while the Cake is being eaten and points to its Plate cards. `Previous slice` appears only while the Cake is Parked and points to the most recent Slice whose exit parked it. It is derived historical navigation, never a current commitment or candidate. `Next slice` appears only while the Cake is waiting on the Stand. Current, Previous, and Next are mutually exclusive. `Available slices` lists every valid inactive Slice that could be eaten later; Current, Next, Finished, and Abandoned Slices do not appear there. A paused Previous Slice may also appear under Available because its historical and eligibility roles are distinct. Exhaustive history remains derived internally and stays off the Cake card. Plate membership remains authoritative for currentness.
 
+`Repository` selects where the Cake's nonterminal Slices live. Attaching a Repository is safe only when no unfinished Trello Slice remains; Finished and Abandoned Trello Slices stay where they ended and may remain the Parked Cake's Previous Slice.
+
 A Slice contains:
 
 ```text

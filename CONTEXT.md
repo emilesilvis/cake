@@ -9,7 +9,7 @@ A portfolio-level pursuit or direction that can yield one or more Slices. Its Tr
 _Avoid_: Project, task, initiative
 
 **Slice**:
-One independently finishable outcome with observable success and exactly one parent Cake. It lives in a GitHub issue when its Cake names a Repository; otherwise it lives in a Trello card.
+One independently finishable outcome with observable success and exactly one parent Cake. A nonterminal Slice lives in a GitHub issue when its Cake names a Repository and otherwise in a Trello card; terminal history remains where it ended if its Cake later adopts a Repository.
 _Avoid_: Task, implementation step, entire Cake
 
 **Pantry**:

@@ -58,6 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
     adopt.add_argument("--slice", required=True, dest="slice_reference")
     add_draft(adopt)
 
+    attach_repository = subparsers.add_parser("attach-repository")
+    attach_repository.add_argument("--cake", required=True)
+    attach_repository.add_argument("--repository", required=True)
+    attach_repository.add_argument("--apply-token")
+
     migrate = subparsers.add_parser("migrate-to-github")
     migrate.add_argument("--cake", required=True)
     migrate.add_argument("--slice", required=True, dest="slice_reference")
@@ -77,6 +82,12 @@ def main() -> int:
         elif args.command == "sync-available":
             result = slicer.sync_available(
                 args.cake, confirmation_token=args.apply_token
+            )
+        elif args.command == "attach-repository":
+            result = slicer.attach_repository(
+                args.cake,
+                repository=args.repository,
+                confirmation_token=args.apply_token,
             )
         elif args.command == "migrate-to-github":
             result = slicer.migrate_to_github(

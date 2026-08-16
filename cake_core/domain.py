@@ -480,12 +480,15 @@ def previous_slice_reference(
     stored_key = canonical_ref(cake.get("previous_slice"))
     stored_reference: str | None = None
     for index, record in enumerate(catalog):
+        disposition = normalize(record.get("disposition", "candidate"))
         if (
-            record.get("adapter") != _slice_provider(cake)
-            or not record.get("cake")
+            not record.get("cake")
             or not _record_matches(cake, record["cake"])
-            or normalize(record.get("disposition", "candidate"))
-            not in {"paused", *TERMINAL_SLICE_DISPOSITIONS}
+            or disposition not in {"paused", *TERMINAL_SLICE_DISPOSITIONS}
+            or (
+                disposition not in TERMINAL_SLICE_DISPOSITIONS
+                and record.get("adapter") != _slice_provider(cake)
+            )
         ):
             continue
         try:
@@ -802,18 +805,20 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
             parent = parent_matches[0]
             expected_provider = _slice_provider(parent)
             actual_provider = slice_record.get("adapter")
-            if actual_provider != expected_provider:
-                finding = {
-                    "code": "slice_registry_mismatch",
-                    "slice": slice_record.get("url") or slice_record.get("id"),
-                    "cake": parent.get("url") or parent.get("id"),
-                    "actual": actual_provider,
-                    "expected": expected_provider,
-                }
-                if normalize(slice_record.get("disposition", "candidate")) in TERMINAL_SLICE_DISPOSITIONS:
-                    warnings.append(finding)
-                else:
-                    errors.append(finding)
+            if (
+                actual_provider != expected_provider
+                and normalize(slice_record.get("disposition", "candidate"))
+                not in TERMINAL_SLICE_DISPOSITIONS
+            ):
+                errors.append(
+                    {
+                        "code": "slice_registry_mismatch",
+                        "slice": slice_record.get("url") or slice_record.get("id"),
+                        "cake": parent.get("url") or parent.get("id"),
+                        "actual": actual_provider,
+                        "expected": expected_provider,
+                    }
+                )
 
         adapter = slice_record.get("adapter")
         reference = slice_record.get("url") or slice_record.get("id")
