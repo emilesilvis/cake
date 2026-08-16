@@ -1,6 +1,6 @@
 ---
 name: cake-doctor
-description: Check the health of the Cake system without changing it. Use when auditing Cake, detecting consequences of manually added or moved cards or issues, validating Current, Next, and Available Slice navigation, Plate links, and cross-links, checking visible WIP limits and Capacity Constraints, or deciding which repair skill should take over. Route portfolio membership and priority judgment to cake-prioritise and Slice repair to cake-slice.
+description: Check the health of the Cake system without changing it. Use when auditing Cake, detecting consequences of manually added or moved cards or issues, validating Current, Previous, Next, and Available Slice navigation, Plate links, and cross-links, checking visible WIP limits and Capacity Constraints, or deciding which repair skill should take over. Route portfolio membership and priority judgment to cake-prioritise and Slice repair to cake-slice.
 ---
 
 # Cake Doctor
@@ -12,13 +12,13 @@ Read `../../CONTEXT.md` completely before acting. Trello is the portfolio interf
 1. Run `python3 scripts/doctor.py check`. This is read-only. Treat a visible legacy `Slice index:` field as a finding even when the underlying links are otherwise correct. If configuration or a provider is unavailable, report that plainly and stop only where the missing source prevents a reliable conclusion.
 2. Lead with either `Cake is healthy` or `Cake needs attention`. Give the current counts and visible WIP position, then list only actionable findings using card names and clickable links. Do not dump raw issue codes or JSON unless the user asks.
 3. Separate structural health from portfolio judgment. A structurally valid Plate is not automatically the right Plate. If the user added or moved current work manually, or the report marks a portfolio challenge as required, read `../cake-prioritise/SKILL.md` completely and challenge whether the Slice and its parent belong in current WIP.
-4. Route membership, Cake Stand, Next Slice, Plate, and WIP decisions to `cake-prioritise`. Route malformed Slice contracts, Available slices drift, and provider migration to `cake-slice`. Read the delegated skill completely before using it.
+4. Route membership, Cake Stand, Next Slice, Plate, and WIP decisions to `cake-prioritise`. Route malformed Slice contracts, Previous or Available slices drift, and provider migration to `cake-slice`. Read the delegated skill completely before using it.
 5. Do not repair anything during the check. Any repair must use the responsible skill's exact preview and wait for explicit approval before writing.
 6. Re-run the check after approved repairs. Call the system healthy only when structural findings are gone; mention any provider check that could not be completed.
 
 ## What healthy means
 
-- Every Slice lives in one valid place selected by its Cake. Every Cake on the Stand shows its Current Slice or its Next Slice, and every Cake shows exactly every other valid inactive Slice under Available slices; terminal history stays out of sight.
+- Every Slice lives in one valid place selected by its Cake. Every Cake on the Stand shows its Current Slice or its Next Slice; a Parked Cake shows its derived Previous Slice when prior work exists; and every Cake shows exactly every valid inactive Slice under Available slices. Exhaustive terminal history stays out of sight.
 - Every current Slice has one Plate entry in Eating or Blocked, one finishable Outcome and observable Success, and exactly one parent Cake on the Stand. A GitHub Slice and its Plate card link to each other; a Trello-only Slice uses its own card directly.
 - Every Cake being eaten links to exactly its current Plate cards. Every waiting Cake has one valid canonical Next Slice. Parent and Plate links use clickable Trello short URLs; canonical GitHub Slice links use issue URLs.
 - Archived Slices may point to archived historical Cakes. Archived Cakes do not appear in normal portfolio choices and are never treated as active membership.

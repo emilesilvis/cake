@@ -309,7 +309,7 @@ class GitHubAdapter:
             "--limit",
             "1000",
             "--json",
-            "number,title,url,state,body",
+            "number,title,url,state,body,updatedAt,closedAt",
         ]
         if query.strip():
             args.extend(["--search", query.strip()])

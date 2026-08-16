@@ -19,6 +19,7 @@ def parent():
         "slice_index": [],
         "current_slice_links": [],
         "current_slices": [],
+        "previous_slice": None,
         "next_slice": None,
         "available_slices": [],
         "raw": {
@@ -108,6 +109,42 @@ class SlicingTest(unittest.TestCase):
         self.assertEqual(
             portfolio._update_cake.call_args.kwargs["available_slices"],
             ["https://trello.com/c/one", "https://trello.com/c/two"],
+        )
+
+    def test_sync_available_repairs_previous_slice_navigation_for_a_parked_cake(self) -> None:
+        cake = parent()
+        cake["state"] = "parked"
+        finished = {
+            "id": "finished",
+            "url": "https://trello.com/c/finished",
+            "name": "Blog: Finished result",
+            "adapter": "plate",
+            "cake": cake["url"],
+            "outcome": "A result exists",
+            "success": "The result is observable",
+            "disposition": "finished",
+            "raw": {
+                "shortLink": "finished",
+                "dateLastActivity": "2026-08-16T09:00:00.000Z",
+            },
+        }
+        portfolio = portfolio_for(cake)
+        portfolio.snapshot.return_value = {"slice_catalog": [finished], "plate": {}}
+        slicer = CakeSlicer(portfolio)
+
+        preview = slicer.sync_available(cake["url"])
+
+        self.assertEqual(preview["write"]["previous_slice"], finished["url"])
+        self.assertIn(
+            "**Previous slice:** https://trello.com/c/finished",
+            preview["write"]["target_body"],
+        )
+        slicer.sync_available(
+            cake["url"], confirmation_token=preview["confirmation_token"]
+        )
+        self.assertEqual(
+            portfolio._update_cake.call_args.kwargs["previous_slice"],
+            finished["url"],
         )
 
     def test_adopt_previews_assigning_a_parent_without_changing_membership(self) -> None:
@@ -338,6 +375,81 @@ class SlicingTest(unittest.TestCase):
         self.assertIn(f"Plate: {plate_url}", body)
         portfolio.trello.update_card.assert_not_called()
 
+    def test_repository_attachment_preserves_terminal_trello_previous_slice(self) -> None:
+        cake = parent()
+        cake["state"] = "parked"
+        cake["previous_slice"] = "https://trello.com/c/finished"
+        finished = {
+            "id": "finished",
+            "url": "https://trello.com/c/finished",
+            "name": "Cake: Finished behavior",
+            "adapter": "plate",
+            "canonical_state": "archived",
+            "cake": cake["url"],
+            "outcome": "The behavior exists",
+            "success": "The behavior is verified",
+            "disposition": "finished",
+            "raw": {
+                "shortLink": "finished",
+                "dateLastActivity": "2026-08-16T09:00:00.000Z",
+            },
+        }
+        portfolio = portfolio_for(cake)
+        portfolio.snapshot.return_value = {
+            "slice_catalog": [finished],
+            "source_health": [],
+        }
+        portfolio.github.slices.return_value = []
+        slicer = CakeSlicer(portfolio)
+
+        preview = slicer.attach_repository(
+            cake["url"], repository="example/cake"
+        )
+
+        self.assertEqual(preview["status"], "preview")
+        self.assertIn(
+            "**Repository:** https://github.com/example/cake",
+            preview["write"]["target_body"],
+        )
+        self.assertIn(
+            "**Previous slice:** https://trello.com/c/finished",
+            preview["write"]["target_body"],
+        )
+
+        result = slicer.attach_repository(
+            cake["url"],
+            repository="example/cake",
+            confirmation_token=preview["confirmation_token"],
+        )
+
+        self.assertEqual(result["status"], "attached")
+        cake_update = portfolio._update_cake.call_args.kwargs
+        self.assertEqual(cake_update["repository"], "https://github.com/example/cake")
+        self.assertEqual(cake_update["previous_slice"], finished["url"])
+
+    def test_repository_attachment_refuses_unfinished_trello_slice(self) -> None:
+        cake = parent()
+        candidate = {
+            "id": "candidate",
+            "url": "https://trello.com/c/candidate",
+            "adapter": "plate",
+            "cake": cake["url"],
+            "outcome": "A result exists",
+            "success": "The result is visible",
+            "disposition": "candidate",
+        }
+        portfolio = portfolio_for(cake)
+        portfolio.snapshot.return_value = {
+            "slice_catalog": [candidate],
+            "source_health": [],
+        }
+        slicer = CakeSlicer(portfolio)
+
+        with self.assertRaisesRegex(CakeError, "Migrate every unfinished"):
+            slicer.attach_repository(cake["url"], repository="example/cake")
+
+        portfolio._update_cake.assert_not_called()
+
     def test_migration_previews_all_cross_provider_writes_before_applying(self) -> None:
         cake = parent()
         cake["next_slice"] = "https://trello.com/c/slice"
@@ -355,8 +467,14 @@ class SlicingTest(unittest.TestCase):
             "disposition": "candidate",
             "raw": {"shortLink": "slice"},
         }
+        finished = {
+            **source,
+            "id": "finished",
+            "url": "https://trello.com/c/finished",
+            "disposition": "finished",
+        }
         portfolio = portfolio_for(cake)
-        portfolio.snapshot.return_value = {"slice_catalog": [source]}
+        portfolio.snapshot.return_value = {"slice_catalog": [finished, source]}
         portfolio._candidate_record.return_value = source
         portfolio.github.slices.return_value = []
         slicer = CakeSlicer(portfolio)

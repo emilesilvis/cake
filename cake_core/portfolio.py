@@ -20,6 +20,7 @@ from .domain import (
     parse_cake_contract,
     parse_plate_projection_contract,
     parse_slice_contract,
+    previous_slice_reference,
     preview_transition,
     token_for,
     trello_card_url,
@@ -666,6 +667,7 @@ class CakePortfolio:
             "finished_when": cake.get("finished_when"),
             "repository": cake.get("repository"),
             "slice_index": cake.get("slice_index", []),
+            "previous_slice": cake.get("previous_slice"),
             "next_slice": cake.get("next_slice"),
             "current_slices": cake.get("current_slices", []),
             "available_slices": cake.get("available_slices", []),
@@ -678,6 +680,7 @@ class CakePortfolio:
             values.get("current_slices"),
             values.get("repository"),
             values.get("available_slices"),
+            values.get("previous_slice"),
             trello_markdown=True,
         )
         self.trello.update_card(cake["id"], description=description)
@@ -763,7 +766,15 @@ class CakePortfolio:
                 self._move_cake_card(
                     parent,
                     operation["cake_state"],
-                    {**operation, "available_slices": available},
+                    {
+                        **operation,
+                        "available_slices": available,
+                        "previous_slice": (
+                            candidate_reference
+                            if normalize(operation["cake_state"]) == "parked"
+                            else None
+                        ),
+                    },
                 )
             else:
                 self._update_cake(
@@ -897,6 +908,9 @@ class CakePortfolio:
             "finished_when": operation.get("finished_when", cake.get("finished_when")),
             "repository": cake.get("repository"),
             "slice_index": cake.get("slice_index", []),
+            "previous_slice": operation.get(
+                "previous_slice", cake.get("previous_slice")
+            ),
             "next_slice": operation.get("next_slice", cake.get("next_slice")),
             "current_slices": cake.get("current_slices", []),
             "available_slices": operation.get(
@@ -910,11 +924,19 @@ class CakePortfolio:
                 )
             values["next_slice"] = None
             values["current_slices"] = []
+            if not values.get("previous_slice"):
+                source = snapshot or self.snapshot()
+                values["previous_slice"] = previous_slice_reference(
+                    {**cake, "state": "parked", "previous_slice": None},
+                    source.get("slice_catalog", []),
+                )
         elif target == "finished":
+            values["previous_slice"] = None
             values["next_slice"] = None
             values["current_slices"] = []
             values["available_slices"] = []
         elif target == "on_stand":
+            values["previous_slice"] = None
             source = snapshot or self.snapshot()
             current = [
                 item
@@ -952,6 +974,7 @@ class CakePortfolio:
             values.get("current_slices"),
             values.get("repository"),
             values.get("available_slices"),
+            values.get("previous_slice"),
             trello_markdown=True,
         )
         changes["board_id"] = stand_board["id"]

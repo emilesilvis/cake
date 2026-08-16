@@ -37,6 +37,7 @@ def cake(
         "repository": repository,
         "slice_index": [],
         "current_slice_links": [],
+        "previous_slice": None,
         "next_slice": next_slice,
         "available_slices": [],
     }
@@ -119,6 +120,7 @@ class ContractTest(unittest.TestCase):
                 "repository": None,
                 "slice_index": [],
                 "current_slice_links": [],
+                "previous_slice": None,
                 "next_slice": "https://trello.com/c/slice",
                 "available_slices": [],
             },
@@ -202,6 +204,45 @@ class ContractTest(unittest.TestCase):
             parse_cake_contract(body)["current_slice_links"],
             ["https://trello.com/c/alpha", "https://trello.com/c/beta"],
         )
+
+    def test_parked_previous_slice_round_trips_as_historical_navigation(self) -> None:
+        body = format_cake_contract(
+            "Publish consistently",
+            previous_slice="https://trello.com/c/previous/a-long-title",
+        )
+
+        self.assertEqual(
+            parse_cake_contract(body)["previous_slice"],
+            "https://trello.com/c/previous",
+        )
+        self.assertIn("Previous slice: https://trello.com/c/previous", body)
+
+    def test_previous_slice_cannot_coexist_with_current_or_next_navigation(self) -> None:
+        with self.assertRaisesRegex(CakeError, "Previous Slice"):
+            format_cake_contract(
+                "Publish consistently",
+                next_slice="https://trello.com/c/next",
+                previous_slice="https://trello.com/c/previous",
+            )
+
+    def test_repository_attachment_keeps_terminal_trello_history_valid(self) -> None:
+        parent = cake("cake", repository="https://github.com/example/cake")
+        parent["state"] = "parked"
+        finished = slice_record("previous", parent, disposition="finished")
+        parent["previous_slice"] = finished["url"]
+        source = {
+            "pantry": [],
+            "cake_stand": {
+                "on_stand": [],
+                "parked": [parent],
+                "finished": [],
+            },
+            "plate": {"eating": [], "blocked": []},
+            "slice_catalog": [finished],
+            "source_health": [],
+        }
+
+        self.assertEqual(validate_snapshot(source), {"errors": [], "warnings": []})
 
     def test_trello_full_and_short_urls_are_the_same_reference(self) -> None:
         self.assertEqual(
@@ -434,6 +475,49 @@ class TransitionTest(unittest.TestCase):
         target = result["target"]["cake_stand"]["on_stand"][0]
         self.assertEqual(target["available_slices"], [first["url"]])
 
+    def test_parking_after_the_last_exit_shows_that_slice_as_previous(self) -> None:
+        parent = cake("wolf-tone")
+        extracted = slice_record("extract-zachlab", parent)
+        source = snapshot([parent], [extracted], [current(extracted, parent)])
+
+        result = preview_transition(
+            source,
+            [
+                {
+                    "action": "exit",
+                    "plate_slice": extracted["url"],
+                    "disposition": "finished",
+                    "cake_state": "parked",
+                }
+            ],
+        )
+
+        target = result["target"]["cake_stand"]["parked"][0]
+        self.assertEqual(target["previous_slice"], extracted["url"])
+        self.assertEqual(target["available_slices"], [])
+        self.assertEqual(result["target_issues"]["errors"], [])
+
+    def test_paused_previous_slice_remains_available_when_its_cake_is_parked(self) -> None:
+        parent = cake("wolf-tone")
+        extracted = slice_record("extract-zachlab", parent)
+        source = snapshot([parent], [extracted], [current(extracted, parent)])
+
+        result = preview_transition(
+            source,
+            [
+                {
+                    "action": "exit",
+                    "plate_slice": extracted["url"],
+                    "disposition": "paused",
+                    "cake_state": "parked",
+                }
+            ],
+        )
+
+        target = result["target"]["cake_stand"]["parked"][0]
+        self.assertEqual(target["previous_slice"], extracted["url"])
+        self.assertEqual(target["available_slices"], [extracted["url"]])
+
     def test_cake_cannot_leave_stand_while_a_slice_is_current(self) -> None:
         parent = cake("blog")
         feed = slice_record("feed", parent)
@@ -443,6 +527,22 @@ class TransitionTest(unittest.TestCase):
                 source,
                 [{"action": "move_cake", "cake": parent["url"], "to": "parked"}],
             )
+
+    def test_parking_a_waiting_cake_recovers_its_previous_slice_from_history(self) -> None:
+        parent = cake("blog", next_slice="https://trello.com/c/next")
+        previous = slice_record("previous", parent, disposition="finished")
+        upcoming = slice_record("next", parent)
+        source = snapshot([parent], [previous, upcoming])
+
+        result = preview_transition(
+            source,
+            [{"action": "move_cake", "cake": parent["url"], "to": "parked"}],
+        )
+
+        target = result["target"]["cake_stand"]["parked"][0]
+        self.assertEqual(target["previous_slice"], previous["url"])
+        self.assertIsNone(target["next_slice"])
+        self.assertEqual(target["available_slices"], [upcoming["url"]])
 
     def test_promoting_a_pantry_cake_adopts_its_current_slice_link(self) -> None:
         parent = cake("orb")
