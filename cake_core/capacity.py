@@ -1,4 +1,4 @@
-"""Current-period load and checklist progress for recurring Rhythms."""
+"""Weekly load and checklist progress for recurring Rhythms."""
 
 from __future__ import annotations
 
@@ -88,8 +88,16 @@ def _period_kind(cadence: str, load: str) -> str | None:
     if re.search(rf"\b(?:{day_names})\b.*\b(?:{day_names})\b", value):
         return "week"
     if re.search(r"\b(?:per|each|every)\s+day\b|\bdaily\b", value):
-        return "day"
+        return "week"
     return None
+
+
+def _occurrences_in_period(
+    amount: float, source_period: str, target_period: str | None
+) -> float:
+    if source_period == "day" and target_period == "week":
+        return amount * len(_DAYS)
+    return amount
 
 
 def _target_occurrences(
@@ -97,28 +105,31 @@ def _target_occurrences(
 ) -> tuple[float | None, str]:
     value = normalize(load)
     match = re.search(
-        rf"\b({_NUMBER})\s+times?\s+(?:per|each)\s+(?:day|week)\b", value
+        rf"\b({_NUMBER})\s+times?\s+(?:per|each)\s+(day|week)\b", value
     )
     if match:
         unit = "session" if re.search(r"\bsessions?\b", value) else "occurrence"
-        return _number(match.group(1)), unit
+        return _occurrences_in_period(_number(match.group(1)), match.group(2), period), unit
 
     nouns = r"sessions?|reviews?|logs?|days?|appointments?|bookings?|occurrences?"
     match = re.search(
-        rf"\b({_NUMBER})(?:\s+[\w-]+){{0,6}}\s+({nouns})\s+(?:per|each)\s+(?:day|week)\b",
+        rf"\b({_NUMBER})(?:\s+[\w-]+){{0,6}}\s+({nouns})\s+(?:per|each)\s+(day|week)\b",
         value,
     )
     if match:
         noun = re.sub(r"s$", "", match.group(2))
-        return _number(match.group(1)), noun
+        return _occurrences_in_period(_number(match.group(1)), match.group(3), period), noun
 
     cadence_value = normalize(cadence)
     match = re.search(
-        rf"\b({_NUMBER})\s+times?\s+(?:per|each)\s+(?:day|week)\b",
+        rf"\b({_NUMBER})\s+times?\s+(?:per|each)\s+(day|week)\b",
         cadence_value,
     )
     if match:
-        return _number(match.group(1)), "occurrence"
+        return (
+            _occurrences_in_period(_number(match.group(1)), match.group(2), period),
+            "occurrence",
+        )
     if period == "week" and re.search(r"\bdaily\b|\bevery day\b", cadence_value):
         return 7.0, "day"
     if period == "day" or re.search(r"\bdaily\b|\bevery day\b", cadence_value):
@@ -242,6 +253,8 @@ def _scheduled_days(cadence: str | None) -> list[str]:
         value,
     )
     selected: set[str] = set()
+    if re.search(r"\bdaily\b|\bevery day\b", value):
+        selected.update(_DAYS)
     for first, last in ranges:
         start = _DAYS.index(day_by_normalized[first])
         end = _DAYS.index(day_by_normalized[last])

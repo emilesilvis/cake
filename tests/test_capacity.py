@@ -96,6 +96,18 @@ class RhythmContractTest(unittest.TestCase):
             7,
         )
 
+    def test_daily_loads_are_accumulated_into_the_weekly_review(self) -> None:
+        self.assertEqual(
+            quantify_rhythm_load("Daily.", "One review per day."),
+            {
+                "period": "week",
+                "occurrences": 7,
+                "unit": "review",
+                "minutes_per_occurrence": None,
+                "minutes": None,
+            },
+        )
+
     def test_week_uses_local_monday_to_monday_boundaries(self) -> None:
         period = current_period(
             "week",
@@ -108,6 +120,30 @@ class RhythmContractTest(unittest.TestCase):
 
 
 class RhythmChecklistTest(unittest.TestCase):
+    def test_plain_daily_cadence_produces_a_monday_to_sunday_checklist(self) -> None:
+        anki = constraint(
+            "anki",
+            "Anki",
+            "Daily.",
+            "Complete all reviews due that day; duration varies.",
+        )
+
+        spec = rhythm_checklist_spec(anki, now=NOW, timezone_name=TIMEZONE)
+
+        self.assertEqual(spec["name"], "Cake · 2026-08-10–2026-08-16")
+        self.assertEqual(
+            spec["items"],
+            [
+                "Monday",
+                "Tuesday",
+                "Wednesday",
+                "Thursday",
+                "Friday",
+                "Saturday",
+                "Sunday",
+            ],
+        )
+
     def test_current_period_specs_use_named_days_when_the_cadence_provides_them(self) -> None:
         gym = constraint(
             "gym",

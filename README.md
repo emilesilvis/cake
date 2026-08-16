@@ -4,51 +4,42 @@
 
 # Cake
 
-Cake is a small personal portfolio system. It separates enduring things you care about from the bounded outcomes you are actually focusing on.
+Cake is a tiny personal portfolio system for people with more interesting things to do than unlimited capacity allows.
 
-| Place | Contains | Meaning |
+It separates the directions you care about from the outcomes you are actually working on:
+
+| Place | What goes there | In ordinary language |
 | --- | --- | --- |
-| **Pantry** | Cakes | Things that might deserve commitment one day |
-| **Cake Stand** | Cakes | Your capacity-limited active portfolio |
-| **Plate** | Current Slices | The bounded outcomes consuming attention now |
+| **Pantry** | Possible Cakes | “Maybe later.” |
+| **Cake Stand** | Active Cakes | “This matters now.” |
+| **Plate** | Current Slices | “I am finishing this.” |
+| **Rhythms** | Recurring practices | “This keeps coming back.” |
 
-**Rhythms** are recurring practices, appointments, or obligations that consume capacity. They are planning inputs, not a fourth place or portfolio members, and do not consume Cake Stand or Plate WIP. A Trello setup may keep their cards in an auxiliary `Rhythms` list.
+A **Cake** is an enduring direction. A **Slice** is one finishable outcome. A **Rhythm** is recurring load such as gym, study, piano, or reviews.
 
-A Cake can sit on the Cake Stand without being actively eaten: it is active but waiting, and must name one **Next Slice**. A Slice lives in a GitHub issue when its Cake names a repository; otherwise it lives in a Trello card. Plate contains only current work. If any of a Cake's Slices is current, the Cake must be on the Stand.
+The useful rule is simple: if it can be finished once, it is probably a Slice. If it returns next week wearing the same hat, it is probably a Rhythm.
 
-The full, deliberately small vocabulary lives in [CONTEXT.md](CONTEXT.md).
+The precise vocabulary lives in [CONTEXT.md](CONTEXT.md).
 
-## Three skills
+## Three helpful utensils
 
-- **cake-prioritise** compares the whole portfolio, recommends one focus, and manages Cake Stand, Next Slice, and Plate transitions.
-- **cake-slice** turns one chosen direction into a single independently finishable Slice with observable success.
-- **cake-doctor** checks the Trello system without changing it, explains inconsistencies in human terms, and routes repairs to the responsible skill.
+- **cake-prioritise** decides what deserves your attention and safely moves Cakes and Slices.
+- **cake-slice** shapes one direction into a small, independently finishable Slice.
+- **cake-doctor** checks that the whole system still makes sense without changing anything.
 
-`cake-prioritise` decides *which Slice deserves focus*. `cake-slice` defines *what finishing that Slice means*.
-`cake-doctor` checks whether the resulting system is coherent; structural health never substitutes for prioritisation.
+Clone the whole repository, then link or copy the directories under `skills/` into your agent's skills directory. The skills share the code in `cake_core/`, so they like to stay together.
 
-Clone the whole repository so all three skills can use the shared `cake_core` module, then link or copy the directories under `skills/` into your agent's skills directory.
+## Set the table
 
-## Trello topology
+Cake uses Trello as its human-facing portfolio:
 
-Pantry, Cake Stand, and Plate are configurable Trello boards:
+- **Pantry** holds possible Cakes.
+- **Cake Stand** has `On the stand /N`, `Parked`, and `Finished` lists. It may also have a `Rhythms` list.
+- **Plate** has `Eating /N` and `Blocked` lists. Plate is the source of truth for current work.
 
-- Pantry contains only Cakes that are not yet active.
-- The Cake Stand board holds Cakes across `On the stand`, `Parked`, and `Finished`; only `On the stand` is active portfolio membership. The board may also host an auxiliary `Rhythms` list whose cards are planning inputs, not Cake Stand members.
-- Plate is the source of truth for current work. It is not a backlog or a list of every Slice.
+The `/N` suffix is the visible WIP limit. It is a guardrail, not an electrified fence.
 
-Parked is for a still-valid Cake that may return. A superseded or misclassified Cake card may instead be archived after all of its Slices have left current Plate work. Archived Cake cards are read only to keep historical Slice parent links valid; they stay out of normal portfolio views and choices.
-
-Suggested Trello list names show their WIP limits directly:
-
-- Cake Stand board: `On the stand /3`, `Parked`, `Finished`; optionally, an auxiliary `Rhythms` list
-- Plate: `Eating /2`, `Blocked`
-
-The configuration accepts stable Trello list IDs, so display names and WIP suffixes may change without breaking the tooling.
-
-If a Slice was added to Plate before its Cake existed, repair it in this order: create the Cake in Pantry, attach the Slice to it, then move the Cake onto the Stand. Cake previews each change before writing it.
-
-Configure brand-new boards without migrating anything:
+Configure the boards once:
 
 ```bash
 cd skills/cake-prioritise
@@ -60,85 +51,86 @@ python3 scripts/portfolio.py config set \
   --priority 'The change that matters most now'
 ```
 
-Configuration is stored at `~/.config/cake/config.json`. Trello credentials are read from `~/.trello/credentials` as `API_KEY=...` and `API_TOKEN=...`.
+Configuration is stored at `~/.config/cake/config.json`. Trello credentials live at `~/.trello/credentials`:
 
-## Card contracts
+```text
+API_KEY=...
+API_TOKEN=...
+```
 
-A mature Cake keeps this short, human-facing contract on its card:
+Slices live in Trello by default. If a Cake names a GitHub repository, its unfinished Slices live in GitHub issues instead; Plate shows a small linked card while a Slice is current.
+
+## Card recipes
+
+A Cake needs a direction:
 
 ```text
 Direction: What this Cake is trying to change
 Finished when: Optional genuine ending
 Repository: Optional https://github.com/<owner>/<repository>
-Current slices: https://trello.com/c/<stable-short-link>
-- https://trello.com/c/<another-stable-short-link>
-Previous slice: <canonical Trello card or GitHub issue URL>
-Next slice: <canonical Trello card or GitHub issue URL>
-Available slices: <canonical Trello card or GitHub issue URL>
-- <another Slice available to eat>
 ```
 
-`Current slices` appears only while the Cake is being eaten and points to its Plate cards. `Previous slice` appears only while the Cake is Parked and points to the most recent Slice whose exit parked it. It is derived historical navigation, never a current commitment or candidate. `Next slice` appears only while the Cake is waiting on the Stand. Current, Previous, and Next are mutually exclusive. `Available slices` lists every valid inactive Slice that could be eaten later; Current, Next, Finished, and Abandoned Slices do not appear there. A paused Previous Slice may also appear under Available because its historical and eligibility roles are distinct. Exhaustive history remains derived internally and stays off the Cake card. Plate membership remains authoritative for currentness.
-
-`Repository` selects where the Cake's nonterminal Slices live. Attaching a Repository is safe only when no unfinished Trello Slice remains; Finished and Abandoned Trello Slices stay where they ended and may remain the Parked Cake's Previous Slice.
-
-A Slice contains:
+A Slice needs one result and one way to know it is done:
 
 ```text
-Cake: https://trello.com/c/<stable-parent-short-link>
+Cake: https://trello.com/c/<parent>
 Outcome: One independently finishable result
 Success: One observable test
-Not included: Optional essential boundary
-Plate: Optional current Plate projection URL
+Not included: Optional useful boundary
 Disposition: Candidate
 ```
 
-`Cake:` is always a clickable Trello short URL, never a UUID. For a repository-backed Cake, this body lives in a GitHub issue labelled `cake-slice`; `Plate:` appears only while that issue is current. For a Trello-only Cake, the body lives on the canonical Trello Slice card and `Plate:` is omitted.
+Cake manages the Current, Previous, Next, Available, and Plate links. You should not have to do link gardening by hand.
 
-A current GitHub-backed Slice has a small Plate projection:
-
-```text
-Slice: https://github.com/<owner>/<repository>/issues/<number>
-Cake: https://trello.com/c/<stable-parent-short-link>
-Disposition: Current
-```
-
-The issue's `Plate:` link and the projection's `Slice:` link are reciprocal. On Pause, Finish, or Abandon, the projection is archived and the issue loses its Plate link. Paused issues stay open; Finished and Abandoned issues close. A Trello-only Slice simply reopens or archives its canonical card.
-
-A Rhythm may use this lightweight card contract:
+A Rhythm stays deliberately small:
 
 ```text
 Cadence: When it recurs
-Load: How much attention it normally consumes
-Supports: The continuing benefit or Cake it supports
+Load: How much attention it consumes
+Supports: The continuing benefit
 ```
 
-Completing one occurrence of a Rhythm does not create a Slice; it simply recurs. A bounded effort to establish or materially change a Rhythm may still be a Cake with finishable Slices.
+Every Rhythm is reviewed on a Monday–Sunday week. A daily habit can stay pleasantly plain:
 
-Cake quantifies conservative daily and weekly loads from contracts such as `Two sessions per week`, `Four one-hour sessions per week`, and `One 30-minute session, six times per week`. A snapshot adds a `progress` report with the exact local period plus target, completed, and remaining load. Weeks run Monday through Sunday in the configured timezone, or the system timezone when none is configured.
+```text
+Cadence: Daily
+Load: Complete the habit every day
+Supports: The continuing benefit
+```
 
-Cake tracks occurrences with one tool-managed checklist on each Rhythm card. The checklist is named `Cake · <current period>`; its items are named days when Cadence supplies exact days, or numbered occurrences otherwise. Check an item to complete that occurrence. Cake reads the boxes directly—there is no separate occurrence history.
+That automatically produces a Monday–Sunday checklist. You can check all the boxes together at the end of the week.
 
-Prepare or roll over those checklists with a safe preview/apply pair:
+Cake reads checked boxes directly and keeps no separate occurrence history.
+
+## Roll the Rhythms
+
+Preview the next checklist update:
 
 ```bash
 python3 skills/cake-prioritise/scripts/portfolio.py rhythms sync
+```
+
+If the preview looks right, apply its approval token:
+
+```bash
 python3 skills/cake-prioritise/scripts/portfolio.py rhythms sync \
   --apply-token '<token from the preview>'
 ```
 
-The first command never writes. It shows every checklist creation, rename, item reconciliation, and rollover reset and binds the approval token to those exact changes. The second command applies them only if the preview is still current. Cake never resets boxes during the current period. On the first approved sync in a new period, it reuses the managed checklist, changes its period name, and resets its occurrences.
+Rollover is never automatic. Cake reuses the managed checklist for the new period and resets completed boxes only after approval. Monday can wait a moment; it is used to this.
 
-Trello is intentionally the portfolio interface. A Cake's Slices live in GitHub when it names a repository and in Trello otherwise. The helpers do not add health cards, audit comments, timestamps, UUID cross-links, or parallel status metadata. They use visible lists, short contracts, clickable links, and native archives or issue state.
+## Safety, because frosting gets slippery
 
-All state-changing helpers preview exact transitions first and bind approval to the observed source state. WIP limits strongly discourage over-commitment, but an explicitly reviewed overage can proceed.
+Every state-changing helper previews its exact Trello or GitHub changes first. Approval is tied to the state that was observed, so stale plans stop instead of improvising.
+
+Cake does not create audit cards, hidden status systems, UUID links, or surprise migrations. The boards remain the interface, and archived records remain history rather than clutter.
+
+For the full lifecycle rules, see [CONTEXT.md](CONTEXT.md). The provider decision is recorded in [ADR 0001](docs/adr/0001-provider-aware-slice-records.md).
 
 ## Development
 
-The reusable rules and provider adapters live in `cake_core/`; the skill scripts are thin command-line interfaces over that shared module.
+The rules and provider adapters live in `cake_core/`; the skill scripts are thin command-line wrappers.
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
-
-The decision about where Slices live is recorded in [ADR 0001](docs/adr/0001-provider-aware-slice-records.md).
