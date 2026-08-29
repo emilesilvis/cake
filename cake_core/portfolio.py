@@ -16,11 +16,13 @@ from .domain import (
     CakeError,
     available_slice_references,
     canonical_ref,
+    format_cupcake_contract,
     format_cake_contract,
     format_plate_projection_contract,
     format_slice_contract,
     github_repository_name,
     is_github_issue_url,
+    is_cupcake_title,
     normalize,
     parse_cake_contract,
     parse_plate_projection_contract,
@@ -78,6 +80,7 @@ def _cake_from_card(card: dict[str, Any], state: str) -> dict[str, Any]:
         "id": card["id"],
         "url": card.get("url") or card["id"],
         "name": card.get("name", ""),
+        "kind": "cake",
         "state": state,
         "position": card.get("pos"),
         **parse_cake_contract(card.get("desc", "")),
@@ -92,12 +95,38 @@ def _slice_from_trello(card: dict[str, Any], *, lane: str | None = None) -> dict
         "id": card["id"],
         "url": card.get("url") or card["id"],
         "name": card.get("name", ""),
+        "kind": "slice",
         "adapter": "plate",
         "canonical_state": "archived" if card.get("closed") else "open",
         "lane": lane,
         **contract,
         "raw": _compact_card(card),
     }
+
+
+def _cupcake_from_card(
+    card: dict[str, Any], *, state: str | None = None, lane: str | None = None
+) -> dict[str, Any]:
+    contract = parse_slice_contract(card.get("desc", ""))
+    return {
+        "id": card["id"],
+        "url": card.get("url") or card["id"],
+        "name": card.get("name", ""),
+        "kind": "cupcake",
+        "state": state,
+        "position": card.get("pos"),
+        "adapter": "trello",
+        "canonical_state": "archived" if card.get("closed") else "open",
+        "lane": lane,
+        **contract,
+        "raw": _compact_card(card),
+    }
+
+
+def _portfolio_item_from_card(card: dict[str, Any], state: str) -> dict[str, Any]:
+    if is_cupcake_title(card.get("name")):
+        return _cupcake_from_card(card, state=state)
+    return _cake_from_card(card, state)
 
 
 def _projection_from_trello(
@@ -317,9 +346,12 @@ class CakePortfolio:
         snapshot: dict[str, Any] = {
             "priority": self.config.get("portfolio", {}).get("priority"),
             "priority_needs_confirmation": True,
-            "pantry": [_cake_from_card(card, "pantry") for card in pantry_cards],
+            "pantry": [
+                _portfolio_item_from_card(card, "pantry") for card in pantry_cards
+            ],
             "cake_stand": {"on_stand": [], "parked": [], "finished": []},
             "archived_cakes": [],
+            "archived_cupcakes": [],
             "plate": {"eating": [], "blocked": []},
             "slice_catalog": [],
             "rhythms": rhythms,
@@ -359,9 +391,14 @@ class CakePortfolio:
                 continue
             former_state = stand_state_by_list.get(card.get("idList"))
             if former_state in {"on_stand", "parked", "finished"}:
-                archived = _cake_from_card(card, "archived")
+                archived = _portfolio_item_from_card(card, "archived")
                 archived["former_state"] = former_state
-                snapshot["archived_cakes"].append(archived)
+                target = (
+                    "archived_cupcakes"
+                    if archived.get("kind") == "cupcake"
+                    else "archived_cakes"
+                )
+                snapshot[target].append(archived)
 
         for card in stand_cards:
             if is_rhythm_card(card):
@@ -383,7 +420,9 @@ class CakePortfolio:
                     }
                 )
                 continue
-            snapshot["cake_stand"][state].append(_cake_from_card(card, state))
+            snapshot["cake_stand"][state].append(
+                _portfolio_item_from_card(card, state)
+            )
 
         plate_lane_by_list = {item["id"]: lane for lane, item in plate_lists.items()}
         for card in visible_plate_cards:
@@ -405,13 +444,22 @@ class CakePortfolio:
                 )
                 continue
             projection = _projection_from_trello(card, lane=lane)
-            current = projection or {
-                **_slice_from_trello(card, lane=lane),
-                "plate_card": card.get("url") or card["id"],
-                "slice": card.get("url") or card["id"],
-                "projection": False,
-                "disposition": "current",
-            }
+            if is_cupcake_title(card.get("name")):
+                current = {
+                    **_cupcake_from_card(card, lane=lane),
+                    "plate_card": card.get("url") or card["id"],
+                    "slice": card.get("url") or card["id"],
+                    "projection": False,
+                    "disposition": "current",
+                }
+            else:
+                current = projection or {
+                    **_slice_from_trello(card, lane=lane),
+                    "plate_card": card.get("url") or card["id"],
+                    "slice": card.get("url") or card["id"],
+                    "projection": False,
+                    "disposition": "current",
+                }
             snapshot["plate"][lane].append(current)
 
         catalog_by_ref: dict[str, dict[str, Any]] = {}
@@ -422,6 +470,12 @@ class CakePortfolio:
                 catalog_by_ref[key] = slice_record
 
         for card in all_plate_cards:
+            if is_cupcake_title(card.get("name")):
+                if card.get("closed"):
+                    archived = _cupcake_from_card(card, state="archived")
+                    archived["former_state"] = plate_lane_by_list.get(card.get("idList"))
+                    snapshot["archived_cupcakes"].append(archived)
+                continue
             if _projection_from_trello(card):
                 continue
             parsed = _slice_from_trello(card)
@@ -429,11 +483,15 @@ class CakePortfolio:
                 add_slice(parsed)
 
         cakes = [
-            *snapshot["pantry"],
-            *snapshot["cake_stand"]["on_stand"],
-            *snapshot["cake_stand"]["parked"],
-            *snapshot["cake_stand"]["finished"],
-            *snapshot["archived_cakes"],
+            item
+            for item in (
+                *snapshot["pantry"],
+                *snapshot["cake_stand"]["on_stand"],
+                *snapshot["cake_stand"]["parked"],
+                *snapshot["cake_stand"]["finished"],
+                *snapshot["archived_cakes"],
+            )
+            if item.get("kind") != "cupcake"
         ]
         repository_cakes: dict[str, tuple[str, list[dict[str, Any]]]] = {}
         for cake in cakes:
@@ -501,7 +559,10 @@ class CakePortfolio:
                         }
                     )
 
-        on_stand = snapshot["cake_stand"]["on_stand"]
+        on_stand_items = snapshot["cake_stand"]["on_stand"]
+        on_stand = [
+            item for item in on_stand_items if item.get("kind") != "cupcake"
+        ]
         for lane in ("eating", "blocked"):
             for current in snapshot["plate"][lane]:
                 parents = [cake for cake in on_stand if _record_matches(cake, current.get("cake"))]
@@ -513,10 +574,13 @@ class CakePortfolio:
             cake["condition"] = (
                 "being_eaten" if cake["current_slices"] else "waiting_on_the_stand"
             )
+        for item in on_stand_items:
+            if item.get("kind") == "cupcake":
+                item["condition"] = "pull_ready"
 
         snapshot["capacity"] = {
             "cake_stand": {
-                "count": len(on_stand),
+                "count": len(on_stand_items),
                 "policy_owner": "trello",
                 "needs_current_policy_observation": True,
                 **self.trello.plugin_status(stand_board),
@@ -680,6 +744,8 @@ class CakePortfolio:
             raise CakeError("Finished when must be non-empty text when supplied")
 
         clean_name = name.strip()
+        if is_cupcake_title(clean_name):
+            raise CakeError("A Cake name cannot use the 🧁 Cupcake marker")
         snapshot = self.snapshot(include_candidates=False)
         stand = snapshot.get("cake_stand", {})
         existing = [
@@ -797,21 +863,44 @@ class CakePortfolio:
 
     def _cake_record(self, snapshot: dict[str, Any], reference: str) -> dict[str, Any]:
         cakes = [
-            *snapshot.get("pantry", []),
-            *snapshot.get("cake_stand", {}).get("on_stand", []),
-            *snapshot.get("cake_stand", {}).get("parked", []),
-            *snapshot.get("cake_stand", {}).get("finished", []),
+            item
+            for item in (
+                *snapshot.get("pantry", []),
+                *snapshot.get("cake_stand", {}).get("on_stand", []),
+                *snapshot.get("cake_stand", {}).get("parked", []),
+                *snapshot.get("cake_stand", {}).get("finished", []),
+            )
+            if item.get("kind") != "cupcake"
         ]
         matches = [cake for cake in cakes if _record_matches(cake, reference)]
         if len(matches) != 1:
             raise CakeError(f"Expected exactly one Cake matching {reference!r}")
         return matches[0]
 
+    def _cupcake_record(
+        self, snapshot: dict[str, Any], reference: str
+    ) -> dict[str, Any]:
+        records = [
+            *snapshot.get("pantry", []),
+            *snapshot.get("cake_stand", {}).get("on_stand", []),
+            *snapshot.get("cake_stand", {}).get("parked", []),
+            *snapshot.get("plate", {}).get("eating", []),
+            *snapshot.get("plate", {}).get("blocked", []),
+        ]
+        matches = [
+            record
+            for record in records
+            if record.get("kind") == "cupcake" and _record_matches(record, reference)
+        ]
+        if len(matches) != 1:
+            raise CakeError(f"Expected exactly one Cupcake matching {reference!r}")
+        return matches[0]
+
     def _current_record(self, snapshot: dict[str, Any], reference: str) -> dict[str, Any]:
         records = [*snapshot["plate"]["eating"], *snapshot["plate"]["blocked"]]
         matches = [record for record in records if _record_matches(record, reference)]
         if len(matches) != 1:
-            raise CakeError(f"Expected exactly one Plate Slice matching {reference!r}")
+            raise CakeError(f"Expected exactly one Plate item matching {reference!r}")
         return matches[0]
 
     def _candidate_record(self, snapshot: dict[str, Any], reference: str) -> dict[str, Any]:
@@ -871,11 +960,66 @@ class CakePortfolio:
             )
             return
 
+        if action == "pull_cupcake":
+            cupcake = self._cupcake_record(snapshot, operation["cupcake"])
+            if cupcake.get("state") != "on_stand":
+                raise CakeError("Only a Cupcake on the Cake Stand can be pulled")
+            _, plate_lists = self._trello_role("plate")
+            lane = normalize(operation.get("lane", "eating")).replace(" ", "_")
+            if lane not in plate_lists:
+                raise CakeError(f"Plate has no configured {lane!r} lane")
+            description = format_cupcake_contract(
+                cupcake.get("outcome") or "",
+                cupcake.get("success") or "",
+                cupcake.get("not_included"),
+                disposition="current",
+                trello_markdown=True,
+            )
+            plate_board, _ = self._trello_role("plate")
+            self.trello.update_card(
+                cupcake["id"],
+                description=description,
+                board_id=plate_board["id"],
+                list_id=plate_lists[lane]["id"],
+                closed=False,
+            )
+            return
+
         if action == "exit":
             current = self._current_record(snapshot, operation["plate_slice"])
-            parent = self._cake_record(snapshot, current["cake"])
             disposition = normalize(operation["disposition"])
             reason = operation.get("reason")
+            if current.get("kind") == "cupcake":
+                if disposition == "paused":
+                    stand_board, stand_lists = self._trello_role("cake_stand")
+                    description = format_cupcake_contract(
+                        current.get("outcome") or "",
+                        current.get("success") or "",
+                        current.get("not_included"),
+                        disposition="candidate",
+                        trello_markdown=True,
+                    )
+                    self.trello.update_card(
+                        current["id"],
+                        description=description,
+                        board_id=stand_board["id"],
+                        list_id=stand_lists["on_stand"]["id"],
+                        closed=False,
+                    )
+                else:
+                    description = format_cupcake_contract(
+                        current.get("outcome") or "",
+                        current.get("success") or "",
+                        current.get("not_included"),
+                        disposition=disposition,
+                        reason=reason,
+                        trello_markdown=True,
+                    )
+                    self.trello.update_card(
+                        current["id"], description=description, closed=True
+                    )
+                return
+            parent = self._cake_record(snapshot, current["cake"])
             candidate = self._candidate_record(snapshot, current.get("slice") or current["url"])
             candidate_reference = _slice_ref(candidate)
             description = format_slice_contract(
@@ -944,6 +1088,11 @@ class CakePortfolio:
                 )
             return
 
+        if action == "move_cupcake":
+            cupcake = self._cupcake_record(snapshot, operation["cupcake"])
+            self._move_cupcake_card(cupcake, operation["to"])
+            return
+
         if action == "move_cake":
             cake = self._cake_record(snapshot, operation["cake"])
             self._move_cake_card(cake, operation["to"], operation, snapshot=snapshot)
@@ -988,6 +1137,26 @@ class CakePortfolio:
             return
 
         raise CakeError(f"Unknown transition action {action!r}")
+
+    def _move_cupcake_card(self, cupcake: dict[str, Any], target: str) -> None:
+        target = normalize(target).replace(" ", "_")
+        stand_board, stand_lists = self._trello_role("cake_stand")
+        if target not in {"on_stand", "parked"} or target not in stand_lists:
+            raise CakeError(f"Cupcake cannot move to {target!r}")
+        description = format_cupcake_contract(
+            cupcake.get("outcome") or "",
+            cupcake.get("success") or "",
+            cupcake.get("not_included"),
+            disposition="candidate",
+            trello_markdown=True,
+        )
+        self.trello.update_card(
+            cupcake["id"],
+            description=description,
+            board_id=stand_board["id"],
+            list_id=stand_lists[target]["id"],
+            closed=False,
+        )
 
     def _pull_candidate(
         self,

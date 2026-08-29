@@ -12,16 +12,20 @@ _Avoid_: Project, task, initiative
 One independently finishable outcome with observable success and exactly one parent Cake. A nonterminal Slice lives in a GitHub issue when its Cake names a Repository and otherwise in a Trello card; terminal history remains where it ended if its Cake later adopts a Repository.
 _Avoid_: Task, implementation step, entire Cake
 
+**Cupcake**:
+A standalone, independently finishable outcome without a parent Cake. It moves whole among Pantry, Cake Stand, and Plate rather than yielding Slices; follow-on outcomes promote it into a Cake whose current outcome becomes its first Slice.
+_Avoid_: Orphan Slice, Task, small Cake
+
 **Pantry**:
-The collection of possible Cakes that have not been admitted to the active portfolio. Pantry Cakes may still be vague, incomplete, or merely aspirational.
+The collection of possible Cakes and Cupcakes that have not been admitted to the active portfolio. Pantry items may still be vague, incomplete, or merely aspirational.
 _Avoid_: Backlog, queue
 
 **Cake Stand**:
-The capacity-limited active portfolio of mature Cakes. It contains only Cakes, each admitted as an explicit commitment with a clear Direction and either current work or a valid Next Slice.
+The capacity-limited active portfolio of mature Cakes and waiting Cupcakes. Each Cake has a clear Direction and either current work or a valid Next Slice; each Cupcake is itself pull-ready and moves whole to the Plate when eaten.
 _Avoid_: Projects board, project list, Slice list
 
 **Plate**:
-The capacity-limited view and authority for current Slices. A Trello Slice sits there directly; a GitHub Slice uses a small linked Trello card while it is current. Inactive Slices do not occupy it.
+The capacity-limited view and authority for current Slices and Cupcakes. A Trello Slice or Cupcake sits there directly; a GitHub Slice uses a small linked Trello card while it is current. Inactive work does not occupy it.
 _Avoid_: Backlog, next queue
 
 **Next Slice**:
@@ -49,7 +53,7 @@ A Cake Stand Cake with no Slice on Plate and exactly one valid Next Slice.
 _Avoid_: Paused, inactive
 
 **Parked**:
-A mature, still-valid Cake deliberately removed from the active portfolio while remaining available for a future return.
+A mature, still-valid Cake or Cupcake deliberately removed from the active portfolio while remaining available for a future return. A parked Cake may show its Previous Slice; a parked Cupcake remains one whole card.
 _Avoid_: Pantry, Failed, Paused Slice
 
 **Finished**:
@@ -73,5 +77,5 @@ A recurring practice, appointment, or obligation that consumes capacity without 
 _Avoid_: Capacity Constraint, Habit Cake, recurring Slice, routine Slice
 
 **Task**:
-An execution action inside a Slice. A Task does not independently occupy Pantry, Cake Stand, or Plate.
+An execution action inside a Slice or Cupcake. A Task does not independently occupy Pantry, Cake Stand, or Plate.
 _Avoid_: Slice, Cake

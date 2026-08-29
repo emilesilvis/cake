@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read, preview, and explicitly apply one canonical Cake Slice definition."""
+"""Read, preview, and explicitly apply one Slice or Cupcake definition."""
 
 from __future__ import annotations
 
@@ -58,6 +58,10 @@ def build_parser() -> argparse.ArgumentParser:
     adopt.add_argument("--slice", required=True, dest="slice_reference")
     add_draft(adopt)
 
+    cupcake = subparsers.add_parser("cupcake")
+    cupcake.add_argument("--card", required=True, dest="card_reference")
+    add_draft(cupcake)
+
     attach_repository = subparsers.add_parser("attach-repository")
     attach_repository.add_argument("--cake", required=True)
     attach_repository.add_argument("--repository", required=True)
@@ -108,6 +112,8 @@ def main() -> int:
                 result = slicer.create(args.cake, **values)
             elif args.command == "adopt":
                 result = slicer.adopt(args.cake, args.slice_reference, **values)
+            elif args.command == "cupcake":
+                result = slicer.cupcake(args.card_reference, **values)
             else:
                 result = slicer.update(args.cake, args.slice_reference, **values)
         emit(result)

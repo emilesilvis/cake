@@ -17,11 +17,30 @@ _LIMIT_SUFFIX = re.compile(r"(?:^|\s)/\s*(\d+)\s*$")
 def _cake_records(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     stand = snapshot.get("cake_stand", {})
     return [
-        *snapshot.get("pantry", []),
-        *stand.get("on_stand", []),
-        *stand.get("parked", []),
-        *stand.get("finished", []),
-        *snapshot.get("archived_cakes", []),
+        record
+        for record in (
+            *snapshot.get("pantry", []),
+            *stand.get("on_stand", []),
+            *stand.get("parked", []),
+            *stand.get("finished", []),
+            *snapshot.get("archived_cakes", []),
+        )
+        if record.get("kind") != "cupcake"
+    ]
+
+
+def _cupcake_records(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    stand = snapshot.get("cake_stand", {})
+    return [
+        record
+        for record in (
+            *snapshot.get("pantry", []),
+            *stand.get("on_stand", []),
+            *stand.get("parked", []),
+            *stand.get("finished", []),
+            *snapshot.get("archived_cupcakes", []),
+        )
+        if record.get("kind") == "cupcake"
     ]
 
 
@@ -43,7 +62,11 @@ def _matches(record: dict[str, Any], reference: str | None) -> bool:
 def _subject(snapshot: dict[str, Any], reference: str | None) -> dict[str, str] | None:
     if not reference:
         return None
-    records = [*_cake_records(snapshot), *_slice_records(snapshot)]
+    records = [
+        *_cake_records(snapshot),
+        *_cupcake_records(snapshot),
+        *_slice_records(snapshot),
+    ]
     for lane in ("eating", "blocked"):
         records.extend(snapshot.get("plate", {}).get(lane, []))
     match = next((record for record in records if _matches(record, reference)), None)
@@ -70,6 +93,8 @@ def _handoff_for(code: str) -> str | None:
         "legacy_slice_index",
         "slice_registry_mismatch",
         "legacy_delivery_link",
+        "invalid_cupcake_contract",
+        "invalid_cupcake_title",
     }:
         return "cake-slice"
     if code in {
@@ -98,6 +123,8 @@ def _handoff_for(code: str) -> str | None:
         "trello_slice_projection_drift",
         "invalid_plate_projection_link",
         "stale_plate_projection_link",
+        "cupcake_has_parent",
+        "terminal_cupcake_on_plate",
     }:
         return "cake-prioritise"
     return None
@@ -113,6 +140,16 @@ def _finding_for_issue(
     cake_name = _display(cake_subject, "A Cake")
     messages = {
         "orphan_slice": f"{slice_name} is current but has no parent Cake.",
+        "invalid_cupcake_contract": (
+            f"{slice_name} does not have a valid Cupcake Outcome, Success, and disposition."
+        ),
+        "invalid_cupcake_title": f"{slice_name} is a Cupcake without the 🧁 title marker.",
+        "cupcake_has_parent": (
+            f"{slice_name} is marked as a Cupcake but still points to {cake_name}."
+        ),
+        "terminal_cupcake_on_plate": (
+            f"{slice_name} is on the Plate even though it is already closed."
+        ),
         "parent_not_on_stand": (
             f"{slice_name} is current, but its parent {cake_name} is not on the Cake Stand."
         ),
@@ -327,9 +364,15 @@ class CakeDoctor:
         wip, wip_findings = self._wip(snapshot)
         findings.extend(wip_findings)
         findings.extend(self._rhythm_findings(snapshot))
-        current_slices = [
+        current_plate = [
             *snapshot.get("plate", {}).get("eating", []),
             *snapshot.get("plate", {}).get("blocked", []),
+        ]
+        current_cupcakes = [
+            item for item in current_plate if item.get("kind") == "cupcake"
+        ]
+        current_slices = [
+            item for item in current_plate if item.get("kind") != "cupcake"
         ]
         prioritisation_needed = any(
             finding.get("handoff") == "cake-prioritise" for finding in findings
@@ -341,12 +384,38 @@ class CakeDoctor:
             "status": "healthy" if not findings else "attention",
             "summary": {
                 "cakes_on_stand": len(
-                    snapshot.get("cake_stand", {}).get("on_stand", [])
+                    [
+                        item
+                        for item in snapshot.get("cake_stand", {}).get("on_stand", [])
+                        if item.get("kind") != "cupcake"
+                    ]
+                ),
+                "cupcakes_on_stand": len(
+                    [
+                        item
+                        for item in snapshot.get("cake_stand", {}).get("on_stand", [])
+                        if item.get("kind") == "cupcake"
+                    ]
                 ),
                 "current_slices": len(current_slices),
+                "current_cupcakes": len(current_cupcakes),
                 "rhythms": len(snapshot.get("rhythms", [])),
-                "parked_cakes": len(snapshot.get("cake_stand", {}).get("parked", [])),
+                "parked_cakes": len(
+                    [
+                        item
+                        for item in snapshot.get("cake_stand", {}).get("parked", [])
+                        if item.get("kind") != "cupcake"
+                    ]
+                ),
+                "parked_cupcakes": len(
+                    [
+                        item
+                        for item in snapshot.get("cake_stand", {}).get("parked", [])
+                        if item.get("kind") == "cupcake"
+                    ]
+                ),
                 "archived_cakes": len(snapshot.get("archived_cakes", [])),
+                "archived_cupcakes": len(snapshot.get("archived_cupcakes", [])),
                 "findings": len(findings),
             },
             "current_plate": [
@@ -354,15 +423,16 @@ class CakeDoctor:
                     "name": item.get("name") or item.get("url") or item.get("id"),
                     "url": item.get("slice") or item.get("url") or item.get("id"),
                     "lane": item.get("lane"),
+                    "kind": item.get("kind") or "slice",
                 }
-                for item in current_slices
+                for item in current_plate
             ],
             "wip": wip,
             "findings": findings,
             "handoffs": handoffs,
             "portfolio_challenge": {
                 "required": prioritisation_needed,
-                "recommended": bool(current_slices),
+                "recommended": bool(current_plate),
                 "skill": "cake-prioritise",
                 "reason": (
                     "Current membership has a structural or capacity problem."

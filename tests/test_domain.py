@@ -4,14 +4,19 @@ from copy import deepcopy
 import unittest
 
 from cake_core.domain import (
+    CUPCAKE_MARKER,
     CakeError,
+    cupcake_title,
     format_cake_contract,
+    format_cupcake_contract,
     format_plate_projection_contract,
     format_slice_contract,
     github_repository_name,
     is_github_issue_url,
+    is_cupcake_title,
     is_trello_card_url,
     parse_cake_contract,
+    parse_cupcake_contract,
     parse_plate_projection_contract,
     parse_slice_contract,
     preview_transition,
@@ -105,6 +110,37 @@ def current(record: dict, parent: dict, lane: str = "eating") -> dict:
         "disposition": "current",
         "canonical_state": "open",
     }
+
+
+def cupcake(reference: str, state: str = "on_stand") -> dict:
+    return {
+        "id": reference,
+        "url": f"https://trello.com/c/{reference}",
+        "name": f"{CUPCAKE_MARKER} File the tax return",
+        "kind": "cupcake",
+        "state": state,
+        "cake": None,
+        "outcome": "The tax return is filed",
+        "success": "The tax authority confirms receipt",
+        "not_included": None,
+        "disposition": "candidate",
+        "adapter": "trello",
+        "canonical_state": "open",
+    }
+
+
+def current_cupcake(reference: str, lane: str = "eating") -> dict:
+    record = cupcake(reference)
+    record.update(
+        {
+            "state": None,
+            "lane": lane,
+            "plate_card": record["url"],
+            "slice": record["url"],
+            "disposition": "current",
+        }
+    )
+    return record
 
 
 class ContractTest(unittest.TestCase):
@@ -313,8 +349,194 @@ class ContractTest(unittest.TestCase):
         with self.assertRaisesRegex(CakeError, "Trello card URL"):
             format_slice_contract("a-card-id", "Outcome", "Success")
 
+    def test_cupcake_marker_and_parentless_contract_are_canonical(self) -> None:
+        self.assertTrue(is_cupcake_title("🧁 File the tax return"))
+        self.assertEqual(cupcake_title("File the tax return"), "🧁 File the tax return")
+        self.assertEqual(cupcake_title("🧁File the tax return"), "🧁 File the tax return")
+        self.assertEqual(
+            cupcake_title("🧁 🧁 File the tax return"), "🧁 File the tax return"
+        )
+
+        body = format_cupcake_contract(
+            "The tax return is filed",
+            "The tax authority confirms receipt",
+            "Paying the resulting assessment",
+            disposition="current",
+            trello_markdown=True,
+        )
+
+        self.assertNotIn("Cake:", body)
+        self.assertIn("**Outcome:** The tax return is filed", body)
+        self.assertIn("**Disposition:** Current", body)
+        self.assertEqual(
+            parse_cupcake_contract(body),
+            {
+                "outcome": "The tax return is filed",
+                "success": "The tax authority confirms receipt",
+                "not_included": "Paying the resulting assessment",
+                "disposition": "current",
+                "reason": None,
+            },
+        )
+
+    def test_cupcake_contract_rejects_paused_disposition(self) -> None:
+        with self.assertRaisesRegex(CakeError, "Cupcake disposition"):
+            format_cupcake_contract("Outcome", "Success", disposition="paused")
+
 
 class TransitionTest(unittest.TestCase):
+    def test_marked_parentless_cupcake_is_valid_current_work(self) -> None:
+        source = snapshot([], [])
+        source["plate"]["eating"] = [current_cupcake("tax")]
+
+        self.assertEqual(validate_snapshot(source), {"errors": [], "warnings": []})
+
+    def test_paused_is_not_a_persisted_cupcake_disposition(self) -> None:
+        paused = cupcake("tax", state="parked")
+        paused["disposition"] = "paused"
+        source = snapshot([], [])
+        source["cake_stand"]["parked"] = [paused]
+
+        issues = validate_snapshot(source)
+
+        self.assertEqual(issues["errors"][0]["code"], "invalid_cupcake_contract")
+        self.assertEqual(issues["errors"][0]["invalid"], ["disposition"])
+
+    def test_unmarked_parentless_plate_card_remains_an_orphan_slice(self) -> None:
+        orphan = current_cupcake("tax")
+        orphan.update({"name": "File the tax return", "kind": "slice"})
+        source = snapshot([], [])
+        source["plate"]["eating"] = [orphan]
+
+        issues = validate_snapshot(source)
+
+        self.assertEqual(issues["errors"][0]["code"], "orphan_slice")
+
+    def test_cupcake_on_the_stand_is_pull_ready_without_a_next_slice(self) -> None:
+        source = snapshot([], [])
+        source["cake_stand"]["on_stand"] = [cupcake("tax")]
+
+        result = preview_transition(
+            source,
+            [
+                {
+                    "action": "pull_cupcake",
+                    "cupcake": "https://trello.com/c/tax",
+                    "lane": "eating",
+                }
+            ],
+        )
+
+        self.assertEqual(result["target"]["cake_stand"]["on_stand"], [])
+        pulled = result["target"]["plate"]["eating"][0]
+        self.assertEqual(pulled["kind"], "cupcake")
+        self.assertEqual(pulled["disposition"], "current")
+
+    def test_pantry_cupcake_can_be_admitted_to_the_stand(self) -> None:
+        possible = cupcake("tax", state="pantry")
+        source = snapshot([], [])
+        source["pantry"] = [possible]
+
+        result = preview_transition(
+            source,
+            [
+                {
+                    "action": "move_cupcake",
+                    "cupcake": possible["url"],
+                    "to": "on_stand",
+                }
+            ],
+        )
+
+        self.assertEqual(result["target"]["pantry"], [])
+        self.assertEqual(result["target"]["cake_stand"]["on_stand"][0]["state"], "on_stand")
+
+    def test_pausing_a_cupcake_moves_the_same_item_back_to_the_stand(self) -> None:
+        source = snapshot([], [])
+        source["plate"]["eating"] = [current_cupcake("tax")]
+
+        result = preview_transition(
+            source,
+            [
+                {
+                    "action": "exit",
+                    "plate_slice": "https://trello.com/c/tax",
+                    "disposition": "paused",
+                }
+            ],
+        )
+
+        self.assertEqual(result["target"]["plate"]["eating"], [])
+        waiting = result["target"]["cake_stand"]["on_stand"][0]
+        self.assertEqual(waiting["kind"], "cupcake")
+        self.assertEqual(waiting["disposition"], "candidate")
+
+    def test_cupcake_can_be_parked_and_returned_to_the_stand(self) -> None:
+        source = snapshot([], [])
+        source["cake_stand"]["on_stand"] = [cupcake("tax")]
+
+        result = preview_transition(
+            source,
+            [
+                {
+                    "action": "move_cupcake",
+                    "cupcake": "https://trello.com/c/tax",
+                    "to": "parked",
+                },
+                {
+                    "action": "move_cupcake",
+                    "cupcake": "https://trello.com/c/tax",
+                    "to": "on_stand",
+                },
+            ],
+        )
+
+        self.assertEqual(result["target"]["cake_stand"]["parked"], [])
+        self.assertEqual(
+            result["target"]["cake_stand"]["on_stand"][0]["id"], "tax"
+        )
+
+    def test_finishing_a_cupcake_needs_no_parent_resolution(self) -> None:
+        source = snapshot([], [])
+        source["plate"]["eating"] = [current_cupcake("tax")]
+
+        result = preview_transition(
+            source,
+            [
+                {
+                    "action": "exit",
+                    "plate_slice": "https://trello.com/c/tax",
+                    "disposition": "finished",
+                }
+            ],
+        )
+
+        self.assertEqual(result["target"]["plate"]["eating"], [])
+        self.assertEqual(result["target"]["archived_cupcakes"][0]["id"], "tax")
+        self.assertEqual(
+            result["target"]["archived_cupcakes"][0]["disposition"], "finished"
+        )
+        self.assertEqual(result["target_issues"]["errors"], [])
+
+    def test_cupcake_counts_against_the_capacity_of_its_location(self) -> None:
+        possible = cupcake("tax", state="pantry")
+        source = snapshot([], [])
+        source["pantry"] = [possible]
+
+        result = preview_transition(
+            source,
+            [
+                {
+                    "action": "move_cupcake",
+                    "cupcake": possible["url"],
+                    "to": "on_stand",
+                }
+            ],
+            [{"scope": "cake_stand", "label": "On the stand", "limit": 0}],
+        )
+
+        self.assertEqual(result["capacity_warnings"][0]["after"], 1)
+
     def test_archiving_a_parked_cake_keeps_it_as_a_historical_slice_parent(self) -> None:
         parent = cake("old-routine")
         parent["state"] = "parked"
@@ -337,6 +559,21 @@ class TransitionTest(unittest.TestCase):
             preview_transition(
                 snapshot([parent], []),
                 [{"action": "archive_cake", "cake": parent["url"]}],
+            )
+
+    def test_a_parked_cupcake_cannot_be_archived_as_a_cake(self) -> None:
+        source = snapshot([], [])
+        source["cake_stand"]["parked"] = [cupcake("tax", state="parked")]
+
+        with self.assertRaisesRegex(CakeError, "No Parked Cake"):
+            preview_transition(
+                source,
+                [
+                    {
+                        "action": "archive_cake",
+                        "cake": "https://trello.com/c/tax",
+                    }
+                ],
             )
 
     def test_pull_uses_only_next_slice_and_clears_pointer(self) -> None:

@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 from cake_core.domain import (
     CakeError,
     format_cake_contract,
+    format_cupcake_contract,
     format_plate_projection_contract,
     format_slice_contract,
 )
@@ -174,6 +175,170 @@ def config():
 
 
 class PortfolioTest(unittest.TestCase):
+    def test_snapshot_recognizes_cupcakes_by_title_across_all_three_places(self) -> None:
+        trello = FakeTrello()
+        body = format_cupcake_contract(
+            "The tax return is filed",
+            "The tax authority confirms receipt",
+        )
+        trello.board_cards["pantry"] = [
+            card("maybe-tax", "pantry", "games", "🧁 Maybe file the tax return", body)
+        ]
+        trello.board_cards["stand"] = [
+            card("tax", "stand", "on", "🧁 File the tax return", body)
+        ]
+        trello.board_cards["plate"] = [
+            card("passport", "plate", "eating", "🧁 Renew passport", body)
+        ]
+
+        result = CakePortfolio(config=config(), trello=trello, github=FakeGitHub()).snapshot()
+
+        self.assertEqual(result["pantry"][0]["kind"], "cupcake")
+        self.assertEqual(result["cake_stand"]["on_stand"][0]["kind"], "cupcake")
+        self.assertEqual(result["plate"]["eating"][0]["kind"], "cupcake")
+        self.assertEqual(result["slice_catalog"], [])
+        self.assertEqual(result["capacity"]["cake_stand"]["count"], 1)
+        self.assertEqual(result["capacity"]["plate"]["count"], 1)
+        self.assertEqual(result["issues"], {"errors": [], "warnings": []})
+
+    def test_unmarked_parentless_plate_card_is_still_reported_as_an_orphan(self) -> None:
+        trello = FakeTrello()
+        trello.board_cards["plate"] = [
+            card(
+                "tax",
+                "plate",
+                "eating",
+                "File the tax return",
+                format_cupcake_contract(
+                    "The tax return is filed",
+                    "The tax authority confirms receipt",
+                ),
+            )
+        ]
+
+        result = CakePortfolio(config=config(), trello=trello, github=FakeGitHub()).snapshot()
+
+        self.assertEqual(result["issues"]["errors"][0]["code"], "orphan_slice")
+
+    def test_snapshot_keeps_archived_plate_cupcakes_as_history(self) -> None:
+        trello = FakeTrello()
+        trello.board_cards["plate"] = [
+            card(
+                "tax",
+                "plate",
+                "eating",
+                "🧁 File the tax return",
+                format_cupcake_contract(
+                    "The tax return is filed",
+                    "The tax authority confirms receipt",
+                    disposition="finished",
+                ),
+                closed=True,
+            )
+        ]
+
+        result = CakePortfolio(
+            config=config(), trello=trello, github=FakeGitHub()
+        ).snapshot()
+
+        self.assertEqual(result["plate"]["eating"], [])
+        self.assertEqual(result["archived_cupcakes"][0]["id"], "tax")
+        self.assertEqual(
+            result["archived_cupcakes"][0]["disposition"], "finished"
+        )
+        self.assertEqual(result["slice_catalog"], [])
+
+    def test_pull_cupcake_moves_the_same_card_from_stand_to_plate(self) -> None:
+        trello = FakeTrello()
+        trello.board_cards["stand"] = [
+            card(
+                "tax",
+                "stand",
+                "on",
+                "🧁 File the tax return",
+                format_cupcake_contract(
+                    "The tax return is filed",
+                    "The tax authority confirms receipt",
+                ),
+            )
+        ]
+        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
+
+        portfolio._execute(
+            {
+                "action": "pull_cupcake",
+                "cupcake": "https://trello.com/c/tax",
+                "lane": "eating",
+            }
+        )
+
+        args, changes = trello.writes[0]
+        self.assertEqual(args, ("tax",))
+        self.assertEqual(changes["board_id"], "plate")
+        self.assertEqual(changes["list_id"], "eating")
+        self.assertIn("**Disposition:** Current", changes["description"])
+
+    def test_pausing_cupcake_moves_the_same_card_back_to_stand(self) -> None:
+        trello = FakeTrello()
+        trello.board_cards["plate"] = [
+            card(
+                "tax",
+                "plate",
+                "eating",
+                "🧁 File the tax return",
+                format_cupcake_contract(
+                    "The tax return is filed",
+                    "The tax authority confirms receipt",
+                    disposition="current",
+                ),
+            )
+        ]
+        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
+
+        portfolio._execute(
+            {
+                "action": "exit",
+                "plate_slice": "https://trello.com/c/tax",
+                "disposition": "paused",
+            }
+        )
+
+        _, changes = trello.writes[0]
+        self.assertEqual(changes["board_id"], "stand")
+        self.assertEqual(changes["list_id"], "on")
+        self.assertFalse(changes["closed"])
+        self.assertIn("**Disposition:** Candidate", changes["description"])
+
+    def test_finishing_cupcake_archives_it_without_a_cake_write(self) -> None:
+        trello = FakeTrello()
+        trello.board_cards["plate"] = [
+            card(
+                "tax",
+                "plate",
+                "eating",
+                "🧁 File the tax return",
+                format_cupcake_contract(
+                    "The tax return is filed",
+                    "The tax authority confirms receipt",
+                    disposition="current",
+                ),
+            )
+        ]
+        portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
+
+        portfolio._execute(
+            {
+                "action": "exit",
+                "plate_slice": "https://trello.com/c/tax",
+                "disposition": "finished",
+            }
+        )
+
+        self.assertEqual(len(trello.writes), 1)
+        _, changes = trello.writes[0]
+        self.assertTrue(changes["closed"])
+        self.assertIn("**Disposition:** Finished", changes["description"])
+
     def test_create_cake_previews_exact_pantry_write_without_writing(self) -> None:
         trello = FakeTrello()
         portfolio = CakePortfolio(config=config(), trello=trello, github=FakeGitHub())
@@ -192,6 +357,18 @@ class PortfolioTest(unittest.TestCase):
             result["write"]["body"],
         )
         self.assertEqual(trello.writes, [])
+
+    def test_create_cake_rejects_the_cupcake_title_marker(self) -> None:
+        portfolio = CakePortfolio(
+            config=config(), trello=FakeTrello(), github=FakeGitHub()
+        )
+
+        with self.assertRaisesRegex(CakeError, "Cupcake marker"):
+            portfolio.preview_create_cake(
+                name="🧁 File the tax return",
+                direction="Keep finances orderly",
+                pantry_list="Games",
+            )
 
     def test_create_cake_rejects_a_duplicate_non_archived_name(self) -> None:
         trello = FakeTrello()

@@ -1,4 +1,4 @@
-"""Shape and safely write one provider-aware canonical Cake Slice."""
+"""Shape and safely write one provider-aware Slice or standalone Cupcake."""
 
 from __future__ import annotations
 
@@ -9,12 +9,16 @@ from .domain import (
     TERMINAL_SLICE_DISPOSITIONS,
     available_slice_references,
     canonical_ref,
+    cupcake_title,
     format_cake_contract,
+    format_cupcake_contract,
     format_plate_projection_contract,
     format_slice_contract,
     github_repository_name,
     github_repository_url,
+    is_cupcake_title,
     normalize,
+    parse_cake_contract,
     previous_slice_reference,
     parse_slice_contract,
     token_for,
@@ -109,7 +113,7 @@ def _preview_cake_body(
 
 
 class CakeSlicer:
-    """Read, preview, and apply canonical Slice definition writes."""
+    """Read, preview, and apply Slice and Cupcake definition writes."""
 
     def __init__(self, portfolio: CakePortfolio | None = None):
         self.portfolio = portfolio or CakePortfolio()
@@ -152,6 +156,161 @@ class CakeSlicer:
         record = self.portfolio._candidate_record(snapshot, slice_reference)
         self._assert_parent(cake, record)
         return record
+
+    def _cupcake_source(self, reference: str) -> tuple[dict[str, Any], str]:
+        card = self.portfolio.trello.locate_card(reference)
+        if card.get("closed"):
+            raise CakeError("A finished or archived card cannot be marked as a Cupcake")
+
+        pantry_board, _ = self.portfolio._trello_role("pantry")
+        stand_board, stand_lists = self.portfolio._trello_role("cake_stand")
+        plate_board, plate_lists = self.portfolio._trello_role("plate")
+        board_id = card.get("idBoard")
+        list_id = card.get("idList")
+        if board_id == pantry_board["id"]:
+            disposition = "candidate"
+        elif board_id == stand_board["id"] and list_id in {
+            stand_lists["on_stand"]["id"],
+            stand_lists["parked"]["id"],
+        }:
+            disposition = "candidate"
+        elif board_id == plate_board["id"] and list_id in {
+            plate_lists["eating"]["id"],
+            plate_lists["blocked"]["id"],
+        }:
+            disposition = "current"
+        else:
+            raise CakeError(
+                "A Cupcake card must be in Pantry, on or parked from the Cake Stand, "
+                "or on the Plate"
+            )
+
+        slice_contract = parse_slice_contract(card.get("desc", ""))
+        if slice_contract.get("cake"):
+            raise CakeError("This card already belongs to a Cake and must remain a Slice")
+        cake_contract = parse_cake_contract(card.get("desc", ""))
+        if any(
+            (
+                cake_contract.get("repository"),
+                cake_contract.get("slice_index"),
+                cake_contract.get("current_slice_links"),
+                cake_contract.get("previous_slice"),
+                cake_contract.get("next_slice"),
+                cake_contract.get("available_slices"),
+            )
+        ):
+            raise CakeError("A Cake with Slice navigation cannot be collapsed into a Cupcake")
+
+        snapshot = self.portfolio.snapshot()
+        card_reference = _card_ref(card)
+        linked_slice = any(
+            item.get("cake") and _record_matches(card, item["cake"])
+            for item in snapshot.get("slice_catalog", [])
+        )
+        stand = snapshot.get("cake_stand", {})
+        cakes = [
+            item
+            for item in (
+                *snapshot.get("pantry", []),
+                *stand.get("on_stand", []),
+                *stand.get("parked", []),
+                *stand.get("finished", []),
+                *snapshot.get("archived_cakes", []),
+            )
+            if item.get("kind") != "cupcake"
+        ]
+        linked_navigation = any(
+            canonical_ref(card_reference)
+            in {
+                canonical_ref(cake.get("previous_slice")),
+                canonical_ref(cake.get("next_slice")),
+                *(
+                    canonical_ref(value)
+                    for value in cake.get("current_slice_links") or []
+                ),
+                *(
+                    canonical_ref(value)
+                    for value in cake.get("available_slices") or []
+                ),
+            }
+            for cake in cakes
+        )
+        if linked_slice or linked_navigation:
+            raise CakeError(
+                "A card already linked into a Cake's Slices cannot be marked as a Cupcake"
+            )
+        return card, disposition
+
+    def preview_cupcake(
+        self,
+        card_reference: str,
+        *,
+        title: str,
+        outcome: str,
+        success: str,
+        not_included: str | None = None,
+    ) -> dict[str, Any]:
+        card, disposition = self._cupcake_source(card_reference)
+        write = {
+            "action": "mark_cupcake",
+            "cupcake": _card_ref(card),
+            "title": cupcake_title(title),
+            "body": format_cupcake_contract(
+                outcome,
+                success,
+                not_included,
+                disposition=disposition,
+                trello_markdown=True,
+            ),
+        }
+        payload = {
+            "operation": "shape_cupcake",
+            "source": _compact_card(card),
+            "write": write,
+        }
+        return {
+            "status": "preview",
+            "confirmation_token": token_for(payload),
+            **payload,
+        }
+
+    def cupcake(
+        self,
+        card_reference: str,
+        *,
+        title: str,
+        outcome: str,
+        success: str,
+        not_included: str | None = None,
+        confirmation_token: str | None = None,
+    ) -> dict[str, Any]:
+        preview = self.preview_cupcake(
+            card_reference,
+            title=title,
+            outcome=outcome,
+            success=success,
+            not_included=not_included,
+        )
+        if confirmation_token is None:
+            return preview
+        if confirmation_token != preview["confirmation_token"]:
+            raise CakeError("The approval is stale: the card or Cupcake draft changed")
+        write = preview["write"]
+        card = self.portfolio.trello.update_card(
+            preview["source"]["id"],
+            name=write["title"],
+            description=write["body"],
+        )
+        return {
+            "status": "marked",
+            "cupcake": {
+                "id": card["id"],
+                "url": card.get("url") or card["id"],
+                "name": card.get("name", write["title"]),
+                "kind": "cupcake",
+                **parse_slice_contract(card.get("desc", write["body"])),
+            },
+        }
 
     def preview_sync_available(self, cake_reference: str) -> dict[str, Any]:
         snapshot, cake = self._snapshot_and_cake(cake_reference)
@@ -224,6 +383,8 @@ class CakeSlicer:
     ) -> dict[str, str]:
         if not title.strip():
             raise CakeError("A Slice needs a title")
+        if is_cupcake_title(title):
+            raise CakeError("A Slice title cannot use the 🧁 Cupcake marker")
         return {
             "title": title.strip(),
             "body": format_slice_contract(

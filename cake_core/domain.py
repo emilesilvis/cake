@@ -35,9 +35,11 @@ SLICE_FIELDS = (
     "Reason",
 )
 PLATE_PROJECTION_FIELDS = ("Slice", "Cake", "Disposition")
+CUPCAKE_MARKER = "🧁"
 TERMINAL_SLICE_DISPOSITIONS = {"finished", "abandoned"}
 TERMINAL_CANONICAL_STATES = {"finished", "abandoned", "closed"}
 SLICE_DISPOSITIONS = {"candidate", "current", "paused", *TERMINAL_SLICE_DISPOSITIONS}
+CUPCAKE_DISPOSITIONS = {"candidate", "current", *TERMINAL_SLICE_DISPOSITIONS}
 CAKE_STATES = {"pantry", "on_stand", "parked", "finished"}
 
 _CONTRACT_FIELD_LINE = re.compile(
@@ -51,6 +53,23 @@ class CakeError(RuntimeError):
 
 def normalize(value: str) -> str:
     return " ".join(value.casefold().strip().split())
+
+
+def is_cupcake_title(value: str | None) -> bool:
+    """Return whether a Trello title carries the visible Cupcake marker."""
+
+    return bool(value and value.strip().startswith(CUPCAKE_MARKER))
+
+
+def cupcake_title(value: str) -> str:
+    """Return a non-empty title with exactly one canonical Cupcake marker."""
+
+    clean = value.strip()
+    while clean.startswith(CUPCAKE_MARKER):
+        clean = clean[len(CUPCAKE_MARKER) :].strip()
+    if not clean:
+        raise CakeError("A Cupcake needs a title after the 🧁 marker")
+    return f"{CUPCAKE_MARKER} {clean}"
 
 
 def trello_card_short_link(value: str | None) -> str | None:
@@ -262,6 +281,19 @@ def parse_slice_contract(text: str) -> dict[str, str | None]:
     }
 
 
+def parse_cupcake_contract(text: str) -> dict[str, str | None]:
+    """Read a Cupcake's Slice-shaped contract without inventing a parent."""
+
+    parsed = parse_slice_contract(text)
+    return {
+        "outcome": parsed["outcome"],
+        "success": parsed["success"],
+        "not_included": parsed["not_included"],
+        "disposition": parsed["disposition"],
+        "reason": parsed["reason"],
+    }
+
+
 def is_github_issue_url(value: str | None) -> bool:
     if not value:
         return False
@@ -308,6 +340,38 @@ def format_slice_contract(
             ("Not included", not_included),
             ("Plate", trello_card_url(plate) if plate else None),
             ("GitHub issue", github_issue),
+            ("Disposition", normalized_disposition.title()),
+            ("Reason", reason),
+        ),
+        trello_markdown=trello_markdown,
+    )
+
+
+def format_cupcake_contract(
+    outcome: str,
+    success: str,
+    not_included: str | None = None,
+    disposition: str = "candidate",
+    reason: str | None = None,
+    *,
+    trello_markdown: bool = False,
+) -> str:
+    """Format one standalone outcome without a Cake link."""
+
+    if not outcome.strip():
+        raise CakeError("A Cupcake needs one finishable Outcome")
+    if not success.strip():
+        raise CakeError("A Cupcake needs observable Success")
+    normalized_disposition = normalize(disposition)
+    if normalized_disposition not in CUPCAKE_DISPOSITIONS:
+        raise CakeError(f"Unknown Cupcake disposition {disposition!r}")
+    if normalized_disposition == "abandoned" and not (reason and reason.strip()):
+        raise CakeError("An Abandoned Cupcake needs a reason")
+    return _format_fields(
+        (
+            ("Outcome", outcome),
+            ("Success", success),
+            ("Not included", not_included),
             ("Disposition", normalized_disposition.title()),
             ("Reason", reason),
         ),
@@ -368,13 +432,27 @@ def _find(records: Iterable[dict[str, Any]], reference: str, kind: str) -> dict[
 
 def _cake_records(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     stand = snapshot.get("cake_stand", {})
-    return [
+    records = [
         *snapshot.get("pantry", []),
         *stand.get("on_stand", []),
         *stand.get("parked", []),
         *stand.get("finished", []),
         *snapshot.get("archived_cakes", []),
     ]
+    return [record for record in records if record.get("kind") != "cupcake"]
+
+
+def _cupcake_records(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    stand = snapshot.get("cake_stand", {})
+    records = [
+        *snapshot.get("pantry", []),
+        *stand.get("on_stand", []),
+        *stand.get("parked", []),
+        *stand.get("finished", []),
+        *snapshot.get("archived_cupcakes", []),
+        *_plate_records(snapshot),
+    ]
+    return [record for record in records if record.get("kind") == "cupcake"]
 
 
 def _plate_records(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
@@ -527,9 +605,54 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     cakes = _cake_records(snapshot)
-    on_stand = snapshot.get("cake_stand", {}).get("on_stand", [])
+    cupcakes = _cupcake_records(snapshot)
+    on_stand = [
+        record
+        for record in snapshot.get("cake_stand", {}).get("on_stand", [])
+        if record.get("kind") != "cupcake"
+    ]
     plate = _plate_records(snapshot)
     catalog = _slice_records(snapshot)
+
+    for item in cupcakes:
+        reference = item.get("url") or item.get("id")
+        if not is_cupcake_title(item.get("name")):
+            errors.append({"code": "invalid_cupcake_title", "slice": reference})
+        if item.get("cake"):
+            errors.append(
+                {
+                    "code": "cupcake_has_parent",
+                    "slice": reference,
+                    "cake": item.get("cake"),
+                }
+            )
+        is_mature = item.get("state") in {
+            "on_stand",
+            "parked",
+            "finished",
+            "archived",
+        } or bool(item.get("lane"))
+        missing = [field for field in ("outcome", "success") if not item.get(field)]
+        disposition = normalize(item.get("disposition") or "candidate")
+        expected_dispositions = (
+            {"current"}
+            if item.get("lane")
+            else {"finished", "abandoned"}
+            if item.get("state") in {"finished", "archived"}
+            else {"candidate"}
+        )
+        invalid = [] if disposition in expected_dispositions else ["disposition"]
+        if disposition == "abandoned" and not item.get("reason"):
+            missing.append("reason")
+        if (is_mature and missing) or invalid:
+            errors.append(
+                {
+                    "code": "invalid_cupcake_contract",
+                    "slice": reference,
+                    **({"missing": missing} if missing else {}),
+                    **({"invalid": invalid} if invalid else {}),
+                }
+            )
 
     current_by_cake: dict[str, list[dict[str, Any]]] = {}
     current_by_slice: dict[str, list[dict[str, Any]]] = {}
@@ -546,6 +669,21 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
                     "slice": current.get("slice") or current.get("url") or current.get("id"),
                 }
             )
+        if current.get("kind") == "cupcake":
+            key = _current_key(current)
+            if key in current_keys:
+                errors.append({"code": "duplicate_plate_slice", "slice": key})
+            elif key:
+                current_keys.add(key)
+            if current.get("canonical_state") in TERMINAL_CANONICAL_STATES:
+                warnings.append(
+                    {
+                        "code": "terminal_cupcake_on_plate",
+                        "slice": current.get("url") or current.get("id"),
+                        "canonical_state": current.get("canonical_state"),
+                    }
+                )
+            continue
         cake_ref = current.get("cake")
         if not cake_ref:
             errors.append(
@@ -782,6 +920,8 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
             errors.append({"code": "next_slice_is_current", "cake": cake.get("url") or cake.get("id")})
 
     for slice_record in catalog:
+        if slice_record.get("kind") == "cupcake":
+            continue
         missing = [field for field in ("cake", "outcome", "success") if not slice_record.get(field)]
         if missing:
             errors.append(
@@ -879,6 +1019,34 @@ def _move_cake(snapshot: dict[str, Any], cake: dict[str, Any], target: str) -> N
         snapshot.setdefault("cake_stand", {}).setdefault(target, []).append(cake)
 
 
+def _move_cupcake(
+    snapshot: dict[str, Any], cupcake: dict[str, Any], target: str
+) -> None:
+    if target not in {"pantry", "on_stand", "parked"}:
+        raise CakeError(f"Unknown Cupcake state {target!r}")
+    collections = (
+        snapshot.get("pantry", []),
+        snapshot.get("cake_stand", {}).get("on_stand", []),
+        snapshot.get("cake_stand", {}).get("parked", []),
+        snapshot.get("plate", {}).get("eating", []),
+        snapshot.get("plate", {}).get("blocked", []),
+    )
+    for collection in collections:
+        if cupcake in collection:
+            collection.remove(cupcake)
+            break
+    cupcake["state"] = target
+    cupcake["lane"] = None
+    cupcake["disposition"] = "candidate"
+    cupcake["canonical_state"] = "open"
+    cupcake.pop("plate_card", None)
+    cupcake.pop("slice", None)
+    if target == "pantry":
+        snapshot.setdefault("pantry", []).append(cupcake)
+    else:
+        snapshot.setdefault("cake_stand", {}).setdefault(target, []).append(cupcake)
+
+
 def _candidate_for(snapshot: dict[str, Any], cake: dict[str, Any], reference: str) -> dict[str, Any]:
     candidate = _find(_slice_records(snapshot), reference, "Slice")
     if not candidate.get("cake") or not _record_matches(cake, candidate["cake"]):
@@ -899,6 +1067,10 @@ def _validate_operation(operation: dict[str, Any]) -> None:
     schemas = {
         "nominate": ({"action", "cake", "slice"}, {"action", "cake", "slice"}),
         "pull": ({"action", "cake", "lane"}, {"action", "cake"}),
+        "pull_cupcake": (
+            {"action", "cupcake", "lane"},
+            {"action", "cupcake"},
+        ),
         "exit": (
             {"action", "plate_slice", "disposition", "reason", "next_slice", "cake_state"},
             {"action", "plate_slice", "disposition"},
@@ -913,6 +1085,10 @@ def _validate_operation(operation: dict[str, Any]) -> None:
                 "next_slice",
             },
             {"action", "cake", "to"},
+        ),
+        "move_cupcake": (
+            {"action", "cupcake", "to"},
+            {"action", "cupcake", "to"},
         ),
         "archive_cake": ({"action", "cake"}, {"action", "cake"}),
         "reorder": (
@@ -950,11 +1126,18 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
     _validate_operation(operation)
     action = operation.get("action")
     cakes = _cake_records(snapshot)
+    cupcakes = _cupcake_records(snapshot)
     on_stand = snapshot.get("cake_stand", {}).get("on_stand", [])
+    on_stand_cakes = [
+        item for item in on_stand if item.get("kind") != "cupcake"
+    ]
+    on_stand_cupcakes = [
+        item for item in on_stand if item.get("kind") == "cupcake"
+    ]
     plate = _plate_records(snapshot)
 
     if action == "nominate":
-        cake = _find(on_stand, operation["cake"], "Cake on the Cake Stand")
+        cake = _find(on_stand_cakes, operation["cake"], "Cake on the Cake Stand")
         candidate = _candidate_for(snapshot, cake, operation["slice"])
         candidate_url = _slice_record_url(candidate)
         candidate_reference = canonical_ref(candidate_url)
@@ -968,7 +1151,7 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
         return
 
     if action == "pull":
-        cake = _find(on_stand, operation["cake"], "Cake on the Cake Stand")
+        cake = _find(on_stand_cakes, operation["cake"], "Cake on the Cake Stand")
         if not cake.get("next_slice"):
             raise CakeError("Only a Cake's nominated Next Slice can be pulled")
         candidate = _candidate_for(snapshot, cake, cake["next_slice"])
@@ -1007,21 +1190,72 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
         cake["next_slice"] = None
         return
 
+    if action == "pull_cupcake":
+        cupcake = _find(
+            on_stand_cupcakes,
+            operation["cupcake"],
+            "Cupcake on the Cake Stand",
+        )
+        if not cupcake.get("outcome") or not cupcake.get("success"):
+            raise CakeError("A Cupcake needs Outcome and Success before it can be pulled")
+        lane = normalize(operation.get("lane", "eating")).replace(" ", "_")
+        if lane not in {"eating", "blocked"}:
+            raise CakeError("A pulled Cupcake must enter Eating or Blocked")
+        on_stand.remove(cupcake)
+        reference = cupcake.get("url") or cupcake.get("id")
+        cupcake.update(
+            {
+                "state": None,
+                "lane": lane,
+                "plate_card": reference,
+                "slice": reference,
+                "disposition": "current",
+                "canonical_state": "open",
+            }
+        )
+        snapshot.setdefault("plate", {}).setdefault(lane, []).append(cupcake)
+        return
+
     if action == "exit":
-        current = _find(plate, operation["plate_slice"], "Slice on Plate")
+        current = _find(plate, operation["plate_slice"], "item on Plate")
         disposition = normalize(operation.get("disposition", ""))
         if disposition not in {"finished", "paused", "abandoned"}:
             raise CakeError("A Plate exit must be Finished, Paused, or Abandoned")
         reason = operation.get("reason")
         if disposition == "abandoned" and not (reason and str(reason).strip()):
-            raise CakeError("An Abandoned Slice needs a reason")
+            raise CakeError("An Abandoned Plate item needs a reason")
+        if current.get("kind") == "cupcake":
+            if operation.get("next_slice") or operation.get("cake_state"):
+                raise CakeError("A Cupcake exit cannot resolve a parent Cake")
+            for lane in ("eating", "blocked"):
+                collection = snapshot.get("plate", {}).get(lane, [])
+                if current in collection:
+                    collection.remove(current)
+                    break
+            if disposition == "paused":
+                _move_cupcake(snapshot, current, "on_stand")
+            else:
+                former_lane = current.get("lane")
+                current["disposition"] = disposition
+                current["canonical_state"] = "archived"
+                current["state"] = "archived"
+                current["lane"] = None
+                current["former_state"] = former_lane
+                current.pop("plate_card", None)
+                current.pop("slice", None)
+                snapshot.setdefault("archived_cupcakes", []).append(current)
+            return
         for lane in ("eating", "blocked"):
             collection = snapshot.get("plate", {}).get(lane, [])
             if current in collection:
                 collection.remove(current)
                 break
         slice_ref = current.get("slice") or current.get("url") or current.get("id")
-        matching = [candidate for candidate in _slice_records(snapshot) if _record_matches(candidate, slice_ref)]
+        matching = [
+            candidate
+            for candidate in _slice_records(snapshot)
+            if _record_matches(candidate, slice_ref)
+        ]
         if matching:
             matching[0]["disposition"] = disposition
             matching[0]["reason"] = reason
@@ -1041,7 +1275,11 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
             parent["available_slices"] = _without_reference(
                 parent.get("available_slices") or [], str(slice_ref)
             )
-        remaining = [item for item in _plate_records(snapshot) if _record_matches(parent, item.get("cake", ""))]
+        remaining = [
+            item
+            for item in _plate_records(snapshot)
+            if _record_matches(parent, item.get("cake", ""))
+        ]
         parent["current_slice_links"] = [
             _plate_reference(item)
             for item in remaining
@@ -1072,6 +1310,24 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
         parent["previous_slice"] = str(slice_ref) if target == "parked" else None
         if target == "finished":
             parent["available_slices"] = []
+        return
+
+    if action == "move_cupcake":
+        cupcake = _find(cupcakes, operation["cupcake"], "Cupcake")
+        source = cupcake.get("state")
+        target = normalize(operation.get("to", "")).replace(" ", "_")
+        allowed = {
+            "pantry": {"on_stand"},
+            "on_stand": {"parked"},
+            "parked": {"on_stand"},
+        }
+        if target not in allowed.get(source, set()):
+            raise CakeError(f"A Cupcake cannot move from {source!r} to {target!r}")
+        if target == "on_stand" and (
+            not cupcake.get("outcome") or not cupcake.get("success")
+        ):
+            raise CakeError("A Cupcake needs Outcome and Success before admission")
+        _move_cupcake(snapshot, cupcake, target)
         return
 
     if action == "move_cake":
@@ -1146,7 +1402,10 @@ def _apply_operation(snapshot: dict[str, Any], operation: dict[str, Any], index:
 
     if action == "archive_cake":
         parked = snapshot.get("cake_stand", {}).get("parked", [])
-        cake = _find(parked, operation["cake"], "Parked Cake")
+        parked_cakes = [
+            item for item in parked if item.get("kind") != "cupcake"
+        ]
+        cake = _find(parked_cakes, operation["cake"], "Parked Cake")
         if any(_record_matches(cake, item.get("cake", "")) for item in plate):
             raise CakeError("A Cake with a current Slice cannot be archived")
         parked.remove(cake)
@@ -1233,11 +1492,23 @@ def _operation_references(
 ) -> set[str]:
     references: set[str] = set()
     for operation in operations:
-        for field in ("cake", "slice", "plate_slice", "record", "next_slice"):
+        for field in (
+            "cake",
+            "cupcake",
+            "slice",
+            "plate_slice",
+            "record",
+            "next_slice",
+        ):
             reference = canonical_ref(operation.get(field))
             if reference:
                 references.add(reference)
-    records = [*_cake_records(snapshot), *_plate_records(snapshot), *_slice_records(snapshot)]
+    records = [
+        *_cake_records(snapshot),
+        *_cupcake_records(snapshot),
+        *_plate_records(snapshot),
+        *_slice_records(snapshot),
+    ]
     for record in records:
         record_references = {
             canonical_ref(record.get(field))
@@ -1290,7 +1561,8 @@ def _relevant_source_failures(
             continue
         relevance = health.get("relevance")
         if relevance == "plate_membership" and any(
-            operation.get("action") in {"nominate", "pull", "exit", "archive_cake"}
+            operation.get("action")
+            in {"nominate", "pull", "pull_cupcake", "exit", "archive_cake"}
             or (
                 operation.get("action") == "reorder"
                 and operation.get("collection") in {"eating", "blocked"}
@@ -1300,7 +1572,15 @@ def _relevant_source_failures(
             failures.append(health)
             continue
         if relevance == "cake_stand_membership" and any(
-            operation.get("action") in {"nominate", "pull", "move_cake", "archive_cake"}
+            operation.get("action")
+            in {
+                "nominate",
+                "pull",
+                "pull_cupcake",
+                "move_cake",
+                "move_cupcake",
+                "archive_cake",
+            }
             or (
                 operation.get("action") == "reorder"
                 and operation.get("collection") == "on_stand"
@@ -1332,9 +1612,11 @@ def _transition_source_projection(
     """Select state whose change can alter this transition or its concrete writes."""
 
     cakes = _cake_records(snapshot)
+    cupcakes = _cupcake_records(snapshot)
     plate = _plate_records(snapshot)
     slices = _slice_records(snapshot)
     selected_cakes: dict[str, dict[str, Any]] = {}
+    selected_cupcakes: dict[str, dict[str, Any]] = {}
     selected_plate: dict[str, dict[str, Any]] = {}
     selected_slices: dict[str, dict[str, Any]] = {}
     reordered_collections: dict[str, list[dict[str, Any]]] = {}
@@ -1365,6 +1647,16 @@ def _transition_source_projection(
         add_cake(record.get("cake"))
         return record
 
+    def add_cupcake(reference: str | None) -> dict[str, Any] | None:
+        if not reference:
+            return None
+        matches = [record for record in cupcakes if _record_matches(record, reference)]
+        if len(matches) != 1:
+            return None
+        record = matches[0]
+        selected_cupcakes[key_for(record)] = record
+        return record
+
     def add_plate(reference: str | None) -> dict[str, Any] | None:
         if not reference:
             return None
@@ -1373,8 +1665,11 @@ def _transition_source_projection(
             return None
         record = matches[0]
         selected_plate[key_for(record)] = record
-        add_cake(record.get("cake"))
-        add_slice(record.get("slice") or record.get("url"))
+        if record.get("kind") == "cupcake":
+            add_cupcake(record.get("url") or record.get("id"))
+        else:
+            add_cake(record.get("cake"))
+            add_slice(record.get("slice") or record.get("url"))
         return record
 
     def add_plate_for_cake(cake_record: dict[str, Any] | None) -> None:
@@ -1396,6 +1691,10 @@ def _transition_source_projection(
             add_slice(cake_record.get("next_slice") if cake_record else None)
             include_plate_membership = True
             include_capacity = True
+        elif action == "pull_cupcake":
+            add_cupcake(operation.get("cupcake"))
+            include_plate_membership = True
+            include_capacity = True
         elif action == "exit":
             plate_record = add_plate(operation.get("plate_slice"))
             cake_record = add_cake(plate_record.get("cake") if plate_record else None)
@@ -1406,6 +1705,9 @@ def _transition_source_projection(
             cake_record = add_cake(operation.get("cake"))
             add_plate_for_cake(cake_record)
             add_slice(operation.get("next_slice"))
+            include_capacity = True
+        elif action == "move_cupcake":
+            add_cupcake(operation.get("cupcake"))
             include_capacity = True
         elif action == "archive_cake":
             cake_record = add_cake(operation.get("cake"))
@@ -1467,6 +1769,25 @@ def _transition_source_projection(
             )
             for _, record in sorted(selected_cakes.items())
         ],
+        "cupcakes": [
+            _token_record(
+                record,
+                (
+                    "id",
+                    "url",
+                    "name",
+                    "kind",
+                    "state",
+                    "lane",
+                    "outcome",
+                    "success",
+                    "not_included",
+                    "disposition",
+                    "position",
+                ),
+            )
+            for _, record in sorted(selected_cupcakes.items())
+        ],
         "plate": [
             _token_record(
                 record,
@@ -1474,6 +1795,7 @@ def _transition_source_projection(
                     "id",
                     "url",
                     "name",
+                    "kind",
                     "plate_card",
                     "cake",
                     "slice",
