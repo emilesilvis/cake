@@ -111,6 +111,26 @@ class DoctorTest(unittest.TestCase):
         self.assertEqual(finding["handoff"], "cake-prioritise")
         self.assertTrue(result["portfolio_challenge"]["required"])
 
+    def test_trello_completed_slice_still_on_plate_routes_to_prioritise(self) -> None:
+        snapshot = healthy_snapshot()
+        snapshot["plate"]["eating"][0]["raw"] = {"dueComplete": True}
+        snapshot["issues"] = validate_snapshot(snapshot)
+        portfolio = Mock()
+        portfolio.snapshot.return_value = snapshot
+
+        result = CakeDoctor(portfolio).check()
+
+        finding = next(
+            item
+            for item in result["findings"]
+            if item["code"] == "completed_slice_on_plate"
+        )
+        self.assertEqual(result["status"], "attention")
+        self.assertIn("marked complete in Trello", finding["message"])
+        self.assertIn("Useful Cake: One result", finding["message"])
+        self.assertEqual(finding["handoff"], "cake-prioritise")
+        self.assertTrue(result["portfolio_challenge"]["required"])
+
     def test_eating_limit_counts_blocked_slices(self) -> None:
         snapshot = healthy_snapshot()
         snapshot["plate"]["blocked"] = [deepcopy(snapshot["plate"]["eating"][0])]

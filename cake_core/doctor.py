@@ -76,6 +76,7 @@ def _handoff_for(code: str) -> str | None:
         "orphan_slice",
         "parent_not_on_stand",
         "duplicate_plate_slice",
+        "completed_slice_on_plate",
         "terminal_slice_on_plate",
         "invalid_current_slice_url",
         "invalid_current_slice_links",
@@ -116,6 +117,9 @@ def _finding_for_issue(
             f"{slice_name} is current, but its parent {cake_name} is not on the Cake Stand."
         ),
         "duplicate_plate_slice": f"{slice_name} appears more than once as current work.",
+        "completed_slice_on_plate": (
+            f"{slice_name} is marked complete in Trello but remains on the Plate."
+        ),
         "terminal_slice_on_plate": f"{slice_name} is current even though it is already closed.",
         "invalid_current_slice_url": f"{cake_name} points to a current Slice with an invalid link.",
         "invalid_current_slice_links": f"{cake_name} contains a non-clickable current Slice link.",

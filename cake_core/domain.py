@@ -604,7 +604,15 @@ def validate_snapshot(snapshot: dict[str, Any]) -> dict[str, list[dict[str, Any]
                 }
             )
 
-        if current.get("canonical_state") in TERMINAL_CANONICAL_STATES:
+        raw = current.get("raw")
+        if isinstance(raw, dict) and raw.get("dueComplete") is True:
+            warnings.append(
+                {
+                    "code": "completed_slice_on_plate",
+                    "slice": current.get("slice") or current.get("url"),
+                }
+            )
+        elif current.get("canonical_state") in TERMINAL_CANONICAL_STATES:
             warnings.append(
                 {
                     "code": "terminal_slice_on_plate",
