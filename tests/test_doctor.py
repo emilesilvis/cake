@@ -78,6 +78,94 @@ def healthy_snapshot() -> dict:
 
 
 class DoctorTest(unittest.TestCase):
+    def test_healthy_cupcake_counts_as_plate_work_not_as_a_slice(self) -> None:
+        snapshot = healthy_snapshot()
+        cupcake_url = "https://trello.com/c/tax"
+        snapshot["plate"]["eating"].append(
+            {
+                "id": "tax",
+                "url": cupcake_url,
+                "name": "🧁 File the tax return",
+                "kind": "cupcake",
+                "cake": None,
+                "outcome": "The tax return is filed",
+                "success": "The tax authority confirms receipt",
+                "not_included": None,
+                "plate_card": cupcake_url,
+                "slice": cupcake_url,
+                "lane": "eating",
+                "disposition": "current",
+                "canonical_state": "open",
+            }
+        )
+        snapshot["issues"] = validate_snapshot(snapshot)
+        portfolio = Mock()
+        portfolio.snapshot.return_value = snapshot
+
+        result = CakeDoctor(portfolio).check()
+
+        self.assertEqual(result["status"], "healthy")
+        self.assertEqual(result["summary"]["current_slices"], 1)
+        self.assertEqual(result["summary"]["current_cupcakes"], 1)
+        self.assertEqual(result["wip"][1]["count"], 2)
+        self.assertEqual(result["current_plate"][1]["kind"], "cupcake")
+
+    def test_invalid_cupcake_contract_routes_to_cake_slice(self) -> None:
+        snapshot = healthy_snapshot()
+        cupcake_url = "https://trello.com/c/tax"
+        snapshot["plate"]["eating"].append(
+            {
+                "id": "tax",
+                "url": cupcake_url,
+                "name": "🧁 File the tax return",
+                "kind": "cupcake",
+                "cake": None,
+                "outcome": "The tax return is filed",
+                "success": None,
+                "plate_card": cupcake_url,
+                "slice": cupcake_url,
+                "lane": "eating",
+                "disposition": "current",
+                "canonical_state": "open",
+            }
+        )
+        snapshot["issues"] = validate_snapshot(snapshot)
+        portfolio = Mock()
+        portfolio.snapshot.return_value = snapshot
+
+        result = CakeDoctor(portfolio).check()
+
+        finding = next(
+            item for item in result["findings"] if item["code"] == "invalid_cupcake_contract"
+        )
+        self.assertIn("Cupcake", finding["message"])
+        self.assertEqual(finding["handoff"], "cake-slice")
+
+    def test_parked_cupcake_is_not_counted_as_a_parked_cake(self) -> None:
+        snapshot = healthy_snapshot()
+        snapshot["cake_stand"]["parked"].append(
+            {
+                "id": "tax",
+                "url": "https://trello.com/c/tax",
+                "name": "🧁 File the tax return",
+                "kind": "cupcake",
+                "state": "parked",
+                "cake": None,
+                "outcome": "The tax return is filed",
+                "success": "The tax authority confirms receipt",
+                "disposition": "candidate",
+                "canonical_state": "open",
+            }
+        )
+        snapshot["issues"] = validate_snapshot(snapshot)
+        portfolio = Mock()
+        portfolio.snapshot.return_value = snapshot
+
+        result = CakeDoctor(portfolio).check()
+
+        self.assertEqual(result["summary"]["parked_cakes"], 0)
+        self.assertEqual(result["summary"]["parked_cupcakes"], 1)
+
     def test_healthy_report_stays_read_only_and_separates_priority_judgment(
         self,
     ) -> None:

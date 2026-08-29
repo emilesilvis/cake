@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock
 
-from cake_core.domain import CakeError, format_slice_contract
+from cake_core.domain import CakeError, format_cupcake_contract, format_slice_contract
 from cake_core.slicing import CakeSlicer
 
 
@@ -57,14 +57,222 @@ def portfolio_for(cake):
     portfolio = Mock()
     portfolio.snapshot.return_value = {"anything": True}
     portfolio._cake_record.return_value = cake
-    portfolio._trello_role.return_value = (
-        {"id": "plate", "name": "Plate"},
-        {"eating": {"id": "eating", "name": "Eating"}},
-    )
+    portfolio._trello_role.side_effect = lambda role: {
+        "pantry": (
+            {"id": "pantry", "name": "Pantry"},
+            {},
+        ),
+        "cake_stand": (
+            {"id": "stand", "name": "Cake Stand"},
+            {
+                "on_stand": {"id": "on", "name": "On the stand"},
+                "parked": {"id": "parked", "name": "Parked"},
+                "finished": {"id": "finished", "name": "Finished"},
+            },
+        ),
+        "plate": (
+            {"id": "plate", "name": "Plate"},
+            {
+                "eating": {"id": "eating", "name": "Eating"},
+                "blocked": {"id": "blocked", "name": "Blocked"},
+            },
+        ),
+    }[role]
     return portfolio
 
 
 class SlicingTest(unittest.TestCase):
+    def test_cupcake_preview_marks_and_shapes_an_unmarked_parentless_card(self) -> None:
+        portfolio = portfolio_for(parent())
+        card = {
+            "id": "tax",
+            "url": "https://trello.com/c/tax",
+            "shortLink": "tax",
+            "idBoard": "plate",
+            "idList": "eating",
+            "name": "File the tax return",
+            "desc": "",
+            "closed": False,
+            "pos": 1,
+        }
+        portfolio.trello.locate_card.return_value = card
+        slicer = CakeSlicer(portfolio)
+
+        result = slicer.cupcake(
+            card["url"],
+            title="File the tax return",
+            outcome="The tax return is filed",
+            success="The tax authority confirms receipt",
+        )
+
+        self.assertEqual(result["status"], "preview")
+        self.assertEqual(result["write"]["action"], "mark_cupcake")
+        self.assertEqual(result["write"]["title"], "🧁 File the tax return")
+        self.assertNotIn("Cake:", result["write"]["body"])
+        self.assertIn("**Disposition:** Current", result["write"]["body"])
+        portfolio.trello.update_card.assert_not_called()
+
+    def test_matching_cupcake_token_marks_the_card_without_touching_checklists(self) -> None:
+        portfolio = portfolio_for(parent())
+        card = {
+            "id": "tax",
+            "url": "https://trello.com/c/tax",
+            "shortLink": "tax",
+            "idBoard": "plate",
+            "idList": "eating",
+            "name": "File the tax return",
+            "desc": "",
+            "closed": False,
+            "pos": 1,
+        }
+        portfolio.trello.locate_card.return_value = card
+        values = {
+            "title": "File the tax return",
+            "outcome": "The tax return is filed",
+            "success": "The tax authority confirms receipt",
+        }
+        slicer = CakeSlicer(portfolio)
+        preview = slicer.cupcake(card["url"], **values)
+        portfolio.trello.update_card.return_value = {
+            **card,
+            "name": preview["write"]["title"],
+            "desc": preview["write"]["body"],
+        }
+
+        result = slicer.cupcake(
+            card["url"],
+            **values,
+            confirmation_token=preview["confirmation_token"],
+        )
+
+        self.assertEqual(result["status"], "marked")
+        kwargs = portfolio.trello.update_card.call_args.kwargs
+        self.assertEqual(set(kwargs), {"name", "description"})
+
+    def test_stale_cupcake_token_does_not_mark_the_card(self) -> None:
+        portfolio = portfolio_for(parent())
+        card = {
+            "id": "tax",
+            "url": "https://trello.com/c/tax",
+            "shortLink": "tax",
+            "idBoard": "plate",
+            "idList": "eating",
+            "name": "File the tax return",
+            "desc": "",
+            "closed": False,
+            "pos": 1,
+        }
+        portfolio.trello.locate_card.return_value = card
+        values = {
+            "title": "File the tax return",
+            "outcome": "The tax return is filed",
+            "success": "The tax authority confirms receipt",
+        }
+        slicer = CakeSlicer(portfolio)
+        preview = slicer.cupcake(card["url"], **values)
+        card["name"] = "File the amended tax return"
+
+        with self.assertRaisesRegex(CakeError, "approval is stale"):
+            slicer.cupcake(
+                card["url"],
+                **values,
+                confirmation_token=preview["confirmation_token"],
+            )
+
+        portfolio.trello.update_card.assert_not_called()
+
+    def test_cupcake_refuses_to_erase_an_existing_slice_parent(self) -> None:
+        portfolio = portfolio_for(parent())
+        portfolio.trello.locate_card.return_value = {
+            "id": "slice",
+            "url": "https://trello.com/c/slice",
+            "shortLink": "slice",
+            "idBoard": "plate",
+            "idList": "eating",
+            "name": "Existing Slice",
+            "desc": format_slice_contract(
+                "https://trello.com/c/cake", "Outcome", "Success"
+            ),
+            "closed": False,
+            "pos": 1,
+        }
+        slicer = CakeSlicer(portfolio)
+
+        with self.assertRaisesRegex(CakeError, "already belongs to a Cake"):
+            slicer.cupcake(
+                "https://trello.com/c/slice",
+                title="Existing Slice",
+                outcome="Outcome",
+                success="Success",
+            )
+
+        portfolio.trello.update_card.assert_not_called()
+
+    def test_cupcake_refuses_a_card_already_linked_into_cake_navigation(self) -> None:
+        portfolio = portfolio_for(parent())
+        card = {
+            "id": "slice",
+            "url": "https://trello.com/c/slice",
+            "shortLink": "slice",
+            "idBoard": "plate",
+            "idList": "eating",
+            "name": "File the tax return",
+            "desc": "",
+            "closed": False,
+            "pos": 1,
+        }
+        portfolio.trello.locate_card.return_value = card
+        linked_parent = parent()
+        linked_parent["current_slice_links"] = [card["url"]]
+        portfolio.snapshot.return_value = {
+            "pantry": [],
+            "cake_stand": {
+                "on_stand": [linked_parent],
+                "parked": [],
+                "finished": [],
+            },
+            "archived_cakes": [],
+            "slice_catalog": [],
+        }
+        slicer = CakeSlicer(portfolio)
+
+        with self.assertRaisesRegex(CakeError, "linked into a Cake"):
+            slicer.cupcake(
+                card["url"],
+                title="File the tax return",
+                outcome="The return is filed",
+                success="Receipt exists",
+            )
+
+        portfolio.trello.update_card.assert_not_called()
+
+    def test_slice_title_cannot_keep_the_cupcake_marker_after_promotion(self) -> None:
+        cake = parent()
+        portfolio = portfolio_for(cake)
+        portfolio.trello.locate_card.return_value = {
+            "id": "tax",
+            "url": "https://trello.com/c/tax",
+            "shortLink": "tax",
+            "idBoard": "plate",
+            "idList": "eating",
+            "name": "🧁 File the tax return",
+            "desc": format_cupcake_contract("The return is filed", "Receipt exists"),
+            "closed": False,
+            "pos": 1,
+        }
+        slicer = CakeSlicer(portfolio)
+
+        with self.assertRaisesRegex(CakeError, "Cupcake marker"):
+            slicer.adopt(
+                cake["url"],
+                "https://trello.com/c/tax",
+                title="🧁 File the tax return",
+                outcome="The return is filed",
+                success="Receipt exists",
+            )
+
+        portfolio.trello.update_card.assert_not_called()
+
     def test_sync_available_lists_every_viable_inactive_slice_on_the_cake(self) -> None:
         cake = parent()
         first = {

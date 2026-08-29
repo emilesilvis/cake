@@ -8,6 +8,26 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
 class SkillInstructionTest(unittest.TestCase):
+    def test_cupcakes_have_a_shared_classification_and_marking_protocol(self) -> None:
+        prioritise = (
+            REPOSITORY_ROOT / "skills" / "cake-prioritise" / "SKILL.md"
+        ).read_text()
+        slicing = (
+            REPOSITORY_ROOT / "skills" / "cake-slice" / "SKILL.md"
+        ).read_text()
+        doctor = (
+            REPOSITORY_ROOT / "skills" / "cake-doctor" / "SKILL.md"
+        ).read_text()
+        helper = (
+            REPOSITORY_ROOT / "skills" / "cake-slice" / "scripts" / "slice.py"
+        ).read_text()
+
+        for text in (prioritise, slicing, doctor):
+            self.assertIn("Cupcake", text)
+            self.assertIn("🧁", text)
+        self.assertIn("standalone", prioritise.casefold())
+        self.assertIn('subparsers.add_parser("cupcake")', helper)
+
     def test_session_shaped_slice_does_not_invoke_named_skill(self) -> None:
         skill = (REPOSITORY_ROOT / "skills" / "cake-slice" / "SKILL.md").read_text()
 
