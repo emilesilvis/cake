@@ -46,7 +46,10 @@ class SkillInstructionTest(unittest.TestCase):
 
         self.assertIn("completed and remaining load", skill)
         self.assertIn("Every Rhythm is reviewed on a Monday–Sunday week", skill)
+        self.assertIn("Cake history", skill)
+        self.assertIn("completed/target", skill)
         self.assertIn("rhythms sync", skill)
+        self.assertIn("--week-start", skill)
         self.assertIn("--apply-token", skill)
 
 

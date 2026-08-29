@@ -264,7 +264,7 @@ class RhythmChecklistTest(unittest.TestCase):
             ],
         )
 
-    def test_rollover_renames_reconciles_and_resets_the_managed_checklist(self) -> None:
+    def test_rollover_records_history_before_reusing_the_managed_checklist(self) -> None:
         card = constraint("gym", "Gym", "Twice weekly.", "Two sessions per week.")
         old = checklist(
             "managed",
@@ -279,14 +279,115 @@ class RhythmChecklistTest(unittest.TestCase):
         self.assertEqual(
             [change["action"] for change in plan["changes"]],
             [
+                "create_history_entry",
                 "rename_checklist",
                 "update_check_item",
                 "update_check_item",
                 "delete_check_item",
             ],
         )
-        self.assertEqual(plan["changes"][1]["to"]["state"], "incomplete")
+        self.assertEqual(
+            plan["changes"][0]["name"],
+            "2026-08-03–2026-08-09 · 2/3",
+        )
         self.assertEqual(plan["changes"][2]["to"]["state"], "incomplete")
+        self.assertEqual(plan["changes"][3]["to"]["state"], "incomplete")
+
+    def test_rollover_appends_to_existing_history_without_duplicate_periods(self) -> None:
+        card = constraint("gym", "Gym", "Twice weekly.", "Two sessions per week.")
+        old = checklist(
+            "managed",
+            "Cake · 2026-08-03–2026-08-09",
+            ("Occurrence 1", "complete"),
+            ("Occurrence 2", "incomplete"),
+        )
+        history = checklist(
+            "history",
+            "Cake history",
+            ("2026-07-27–2026-08-02 · 2/2", "complete"),
+        )
+
+        plan = rhythm_checklist_plan(
+            card,
+            [old, history],
+            now=NOW,
+            timezone_name=TIMEZONE,
+        )
+
+        self.assertEqual(plan["changes"][0]["action"], "add_history_entry")
+        self.assertEqual(plan["changes"][0]["checklist"], "history")
+        self.assertEqual(plan["changes"][0]["name"], "2026-08-03–2026-08-09 · 1/2")
+
+    def test_rollover_refuses_to_erase_an_undated_managed_checklist(self) -> None:
+        card = constraint("gym", "Gym", "Twice weekly.", "Two sessions per week.")
+        old = checklist(
+            "managed",
+            "Cake · week unknown",
+            ("Occurrence 1", "complete"),
+            ("Occurrence 2", "incomplete"),
+        )
+
+        with self.assertRaisesRegex(CakeError, "without a dated period"):
+            rhythm_checklist_plan(
+                card,
+                [old],
+                now=NOW,
+                timezone_name=TIMEZONE,
+            )
+
+    def test_observed_rhythm_includes_parseable_weekly_history(self) -> None:
+        card = constraint("gym", "Gym", "Twice weekly.", "Two sessions per week.")
+        current = checklist(
+            "managed",
+            "Cake · 2026-08-10–2026-08-16",
+            ("Occurrence 1", "complete"),
+            ("Occurrence 2", "incomplete"),
+        )
+        history = checklist(
+            "history",
+            "Cake history",
+            ("2026-07-27–2026-08-02 · 2/2", "complete"),
+            ("2026-08-03–2026-08-09 · 1/2", "complete"),
+        )
+
+        observed = observe_rhythms(
+            [card],
+            {"gym": [history, current]},
+            now=NOW,
+            timezone_name=TIMEZONE,
+        )[0]
+
+        self.assertEqual(
+            observed["history"],
+            [
+                {
+                    "period": {
+                        "start": "2026-07-27",
+                        "end": "2026-08-02",
+                    },
+                    "completed": {"occurrences": 2},
+                    "target": {"occurrences": 2},
+                    "checklist": {
+                        "id": "history",
+                        "name": "Cake history",
+                        "item": "history-1",
+                    },
+                },
+                {
+                    "period": {
+                        "start": "2026-08-03",
+                        "end": "2026-08-09",
+                    },
+                    "completed": {"occurrences": 1},
+                    "target": {"occurrences": 2},
+                    "checklist": {
+                        "id": "history",
+                        "name": "Cake history",
+                        "item": "history-2",
+                    },
+                },
+            ],
+        )
 
     def test_current_period_never_resets_checked_items(self) -> None:
         card = constraint("gym", "Gym", "Twice weekly.", "Two sessions per week.")

@@ -100,7 +100,9 @@ Supports: The continuing benefit
 
 That automatically produces a Monday–Sunday checklist. You can check all the boxes together at the end of the week.
 
-Cake reads checked boxes directly and keeps no separate occurrence history.
+Cake reads checked boxes directly. On rollover it adds one compact result such as
+`2026-08-10–2026-08-16 · 2/4` to the card's `Cake history` checklist, so later
+reviews can compare weeks without retaining another full daily checklist.
 
 ## Roll the Rhythms
 
@@ -110,14 +112,22 @@ Preview the next checklist update:
 python3 skills/cake-prioritise/scripts/portfolio.py rhythms sync
 ```
 
+On Sunday, preview a specific coming Monday without rolling the current week early:
+
+```bash
+python3 skills/cake-prioritise/scripts/portfolio.py rhythms sync \
+  --week-start '2026-08-17'
+```
+
 If the preview looks right, apply its approval token:
 
 ```bash
 python3 skills/cake-prioritise/scripts/portfolio.py rhythms sync \
+  --week-start '2026-08-17' \
   --apply-token '<token from the preview>'
 ```
 
-Rollover is never automatic. Cake reuses the managed checklist for the new period and resets completed boxes only after approval. Monday can wait a moment; it is used to this.
+Rollover is never automatic. After approval, Cake records the completed/target result in `Cake history`, reuses the managed checklist for the new period, and resets its completed boxes. Monday can wait a moment; it is used to this.
 
 ## Safety, because frosting gets slippery
 

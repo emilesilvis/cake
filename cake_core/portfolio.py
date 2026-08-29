@@ -537,6 +537,7 @@ class CakePortfolio:
                     "name": item.get("name"),
                     "supports": item.get("supports"),
                     "progress": item.get("progress"),
+                    "history": item.get("history", []),
                 }
                 for item in rhythms
             ],
@@ -608,7 +609,18 @@ class CakePortfolio:
         try:
             for change in changes:
                 action = change["action"]
-                if action == "create_checklist":
+                if action == "create_history_entry":
+                    checklist = self.trello.create_checklist(
+                        change["card"], name=change["checklist_name"]
+                    )
+                    self.trello.create_check_item(
+                        checklist["id"], name=change["name"], checked=True
+                    )
+                elif action == "add_history_entry":
+                    self.trello.create_check_item(
+                        change["checklist"], name=change["name"], checked=True
+                    )
+                elif action == "create_checklist":
                     checklist = self.trello.create_checklist(
                         change["card"], name=change["name"]
                     )

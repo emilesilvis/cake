@@ -7,6 +7,7 @@ from .capacity import (
     quantify_rhythm_load,
     rhythm_checklist_plan,
     rhythm_checklist_spec,
+    rhythm_history,
     rhythm_progress,
 )
 from .doctor import CakeDoctor
@@ -57,6 +58,7 @@ __all__ = [
     "quantify_rhythm_load",
     "rhythm_checklist_plan",
     "rhythm_checklist_spec",
+    "rhythm_history",
     "rhythm_progress",
     "token_for",
     "trello_card_short_link",

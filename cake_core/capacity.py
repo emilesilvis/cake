@@ -12,6 +12,16 @@ from .domain import CakeError, normalize, parse_contract_field_line
 
 RHYTHM_FIELDS = ("Cadence", "Load", "Supports")
 MANAGED_CHECKLIST_PREFIX = "Cake · "
+HISTORY_CHECKLIST_NAME = "Cake history"
+
+_MANAGED_PERIOD = re.compile(
+    rf"^{re.escape(MANAGED_CHECKLIST_PREFIX)}"
+    r"(?P<start>\d{4}-\d{2}-\d{2})–(?P<end>\d{4}-\d{2}-\d{2})$"
+)
+_HISTORY_ENTRY = re.compile(
+    r"^(?P<start>\d{4}-\d{2}-\d{2})–(?P<end>\d{4}-\d{2}-\d{2})"
+    r" · (?P<completed>\d+)/(?P<target>\d+)$"
+)
 
 _DAYS = (
     "Monday",
@@ -320,6 +330,60 @@ def _managed_checklists(checklists: Iterable[dict[str, Any]]) -> list[dict[str, 
     ]
 
 
+def _history_checklists(checklists: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        checklist
+        for checklist in checklists
+        if normalize(str(checklist.get("name") or ""))
+        == normalize(HISTORY_CHECKLIST_NAME)
+    ]
+
+
+def _history_entry(checklist: dict[str, Any]) -> str | None:
+    period = _MANAGED_PERIOD.fullmatch(str(checklist.get("name") or ""))
+    if not period:
+        return None
+    items = list(checklist.get("checkItems", []))
+    completed = sum(
+        1
+        for item in items
+        if normalize(str(item.get("state") or "")) == "complete"
+    )
+    return (
+        f"{period.group('start')}–{period.group('end')}"
+        f" · {completed}/{len(items)}"
+    )
+
+
+def rhythm_history(checklists: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Read compact, completed weekly results retained on a Rhythm card."""
+
+    result: list[dict[str, Any]] = []
+    for checklist in _history_checklists(checklists):
+        for item in checklist.get("checkItems", []):
+            match = _HISTORY_ENTRY.fullmatch(str(item.get("name") or ""))
+            if not match:
+                continue
+            result.append(
+                {
+                    "period": {
+                        "start": match.group("start"),
+                        "end": match.group("end"),
+                    },
+                    "completed": {
+                        "occurrences": int(match.group("completed")),
+                    },
+                    "target": {"occurrences": int(match.group("target"))},
+                    "checklist": {
+                        "id": checklist.get("id"),
+                        "name": checklist.get("name"),
+                        "item": item.get("id"),
+                    },
+                }
+            )
+    return sorted(result, key=lambda entry: entry["period"]["start"])
+
+
 def rhythm_progress(
     card: dict[str, Any],
     checklists: Iterable[dict[str, Any]],
@@ -458,6 +522,44 @@ def rhythm_checklist_plan(
     rollover = checklist.get("name") != spec["name"]
     changes: list[dict[str, Any]] = []
     if rollover:
+        history_name = _history_entry(checklist)
+        if not history_name:
+            raise CakeError(
+                f"Rhythm {card.get('name')!r} has a managed checklist without a dated period"
+            )
+        history = _history_checklists(values)
+        if len(history) > 1:
+            raise CakeError(
+                f"Rhythm {card.get('name')!r} has more than one Cake history checklist"
+            )
+        if history:
+            period = history_name.split(" · ", 1)[0]
+            period_entries = [
+                str(item.get("name") or "")
+                for item in history[0].get("checkItems", [])
+                if str(item.get("name") or "").startswith(f"{period} · ")
+            ]
+            if period_entries and history_name not in period_entries:
+                raise CakeError(
+                    f"Rhythm {card.get('name')!r} has conflicting history for {period}"
+                )
+            if not period_entries:
+                changes.append(
+                    {
+                        "action": "add_history_entry",
+                        "checklist": history[0]["id"],
+                        "name": history_name,
+                    }
+                )
+        else:
+            changes.append(
+                {
+                    "action": "create_history_entry",
+                    "card": card["id"],
+                    "checklist_name": HISTORY_CHECKLIST_NAME,
+                    "name": history_name,
+                }
+            )
         changes.append(
             {
                 "action": "rename_checklist",
@@ -517,7 +619,7 @@ def observe_rhythms(
     now: datetime | None = None,
     timezone_name: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Attach parsed contracts and current-period progress to Rhythm cards."""
+    """Attach parsed contracts, current progress, and weekly history to Rhythms."""
 
     result = []
     for card in cards:
@@ -531,6 +633,7 @@ def observe_rhythms(
                     now=now,
                     timezone_name=timezone_name,
                 ),
+                "history": rhythm_history(checklists_by_card.get(card["id"], [])),
             }
         )
     return result

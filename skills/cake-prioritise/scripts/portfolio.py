@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 from pathlib import Path
 import sys
@@ -46,6 +47,18 @@ def plan_value(value: str) -> dict[str, Any]:
         "operations": plan["operations"],
         "capacity_policies": policies,
     }
+
+
+def week_start(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        result = datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise CakeError("Rhythm week start must be a date formatted YYYY-MM-DD") from None
+    if result.weekday() != 0:
+        raise CakeError("Rhythm week start must be a Monday")
+    return result
 
 
 def config_set(args: argparse.Namespace) -> dict[str, Any]:
@@ -137,6 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rhythm_sync = rhythm_subparsers.add_parser("sync")
     rhythm_sync.add_argument("--apply-token")
+    rhythm_sync.add_argument("--week-start")
 
     create_cake = subparsers.add_parser("create-cake")
     create_cake.add_argument("--name", required=True)
@@ -171,7 +185,8 @@ def main() -> int:
                 )
             elif args.command == "rhythms":
                 result = portfolio.sync_rhythm_checklists(
-                    confirmation_token=args.apply_token
+                    confirmation_token=args.apply_token,
+                    now=week_start(args.week_start),
                 )
             elif args.command == "create-cake":
                 result = portfolio.create_cake(

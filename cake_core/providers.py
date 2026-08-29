@@ -282,11 +282,17 @@ class TrelloAdapter:
             {"name": name},
         )
 
-    def create_check_item(self, checklist_id: str, *, name: str) -> dict[str, Any]:
+    def create_check_item(
+        self,
+        checklist_id: str,
+        *,
+        name: str,
+        checked: bool = False,
+    ) -> dict[str, Any]:
         return self.request(
             "POST",
             f"/checklists/{parse.quote(checklist_id, safe='')}/checkItems",
-            {"name": name, "pos": "bottom"},
+            {"name": name, "pos": "bottom", "checked": checked},
         )
 
     def update_check_item(

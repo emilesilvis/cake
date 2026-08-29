@@ -23,11 +23,11 @@ Read `../../CONTEXT.md` completely before acting. Trello is the portfolio interf
 - Every Cake being eaten links to exactly its current Plate cards. Every waiting Cake has one valid canonical Next Slice. Parent and Plate links use clickable Trello short URLs; canonical GitHub Slice links use issue URLs.
 - Archived Slices may point to archived historical Cakes. Archived Cakes do not appear in normal portfolio choices and are never treated as active membership.
 - Visible `/N` suffixes are respected. The Eating limit covers all current Plate work, including Blocked Slices. A separate Blocked suffix, if present, is also checked.
-- Rhythm cards have Cadence, Load, and Supports, but do not consume Cake Stand or Plate WIP.
+- Rhythm cards have Cadence, Load, and Supports, but do not consume Cake Stand or Plate WIP. They may have one Cake-managed current-period checklist and one `Cake history` checklist of weekly completed/target summaries.
 
 ## Human-interface rule
 
-Never add health cards, audit comments, timestamps, migration notes, origin fields, UUIDs, or provenance labels to Trello. Do not retain a card merely to explain history. Use the existing human contracts, normal lists, clickable links, and Trello's own archive. A diagnosis may contain technical detail internally, but the user-facing report should read like a thoughtful board review.
+Never add health cards, audit comments, arbitrary timestamps, migration notes, origin fields, UUIDs, or provenance labels to Trello. The managed dated entries in a Rhythm's `Cake history` checklist are domain results, not audit metadata. Do not retain a card merely to explain history. Use the existing human contracts, normal lists, clickable links, and Trello's own archive. A diagnosis may contain technical detail internally, but the user-facing report should read like a thoughtful board review.
 
 ## Helper
 

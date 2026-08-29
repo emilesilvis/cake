@@ -79,15 +79,17 @@ class FakeTrello:
                     return checklist
         raise CakeError("missing checklist")
 
-    def create_check_item(self, checklist_id, *, name):
-        self.writes.append((("create_check_item", checklist_id), {"name": name}))
+    def create_check_item(self, checklist_id, *, name, checked=False):
+        self.writes.append(
+            (("create_check_item", checklist_id), {"name": name, "checked": checked})
+        )
         for checklists in self.rhythm_checklists.values():
             for checklist in checklists:
                 if checklist["id"] == checklist_id:
                     item = {
                         "id": f"created-item-{len(checklist['checkItems']) + 1}",
                         "name": name,
-                        "state": "incomplete",
+                        "state": "complete" if checked else "incomplete",
                         "pos": len(checklist["checkItems"]) + 1,
                     }
                     checklist["checkItems"].append(item)
@@ -98,6 +100,11 @@ class FakeTrello:
         self.writes.append(
             (("update_check_item", card_id, item_id), {"name": name, "state": state})
         )
+        for checklist in self.rhythm_checklists.get(card_id, []):
+            for item in checklist["checkItems"]:
+                if item["id"] == item_id:
+                    item.update({"name": name, "state": state})
+                    return item
         return {"id": item_id, "name": name, "state": state}
 
     def delete_check_item(self, card_id, item_id):
@@ -319,6 +326,18 @@ class PortfolioTest(unittest.TestCase):
         ]
         trello.rhythm_checklists["gym"] = [
             {
+                "id": "gym-history",
+                "name": "Cake history",
+                "checkItems": [
+                    {
+                        "id": "prior-week",
+                        "name": "2026-08-03–2026-08-09 · 2/2",
+                        "state": "complete",
+                        "pos": 1,
+                    }
+                ],
+            },
+            {
                 "id": "gym-week",
                 "name": "Cake · 2026-08-10–2026-08-16",
                 "checkItems": [
@@ -354,7 +373,81 @@ class PortfolioTest(unittest.TestCase):
         progress = result["rhythms"][0]["progress"]
         self.assertEqual(progress["completed"]["occurrences"], 1)
         self.assertEqual(progress["remaining"]["occurrences"], 1)
+        self.assertEqual(result["rhythms"][0]["history"][0]["completed"]["occurrences"], 2)
         self.assertEqual(result["capacity"]["rhythms"][0]["progress"], progress)
+        self.assertEqual(
+            result["capacity"]["rhythms"][0]["history"],
+            result["rhythms"][0]["history"],
+        )
+
+    def test_rhythm_rollover_records_history_before_resetting_current_week(self) -> None:
+        trello = FakeTrello()
+        trello.board_cards["stand"] = [
+            card(
+                "gym",
+                "stand",
+                "rhythms",
+                "Gym",
+                "Cadence: Twice weekly\n"
+                "Load: Two sessions per week\n"
+                "Supports: Health",
+            )
+        ]
+        trello.rhythm_checklists["gym"] = [
+            {
+                "id": "gym-week",
+                "name": "Cake · 2026-08-10–2026-08-16",
+                "checkItems": [
+                    {
+                        "id": "monday",
+                        "name": "Occurrence 1",
+                        "state": "complete",
+                        "pos": 1,
+                    },
+                    {
+                        "id": "wednesday",
+                        "name": "Occurrence 2",
+                        "state": "incomplete",
+                        "pos": 2,
+                    },
+                ],
+            }
+        ]
+        value = config()
+        value["portfolio"]["timezone"] = "Europe/Amsterdam"
+        value["portfolio"]["rhythm_sources"] = [
+            {
+                "adapter": "trello",
+                "board": "Cake Stand",
+                "lists": ["Rhythms"],
+            }
+        ]
+        portfolio = CakePortfolio(config=value, trello=trello, github=FakeGitHub())
+        next_week = datetime(2026, 8, 17, 12, tzinfo=timezone.utc)
+
+        preview = portfolio.sync_rhythm_checklists(now=next_week)
+        result = portfolio.sync_rhythm_checklists(
+            confirmation_token=preview["confirmation_token"],
+            now=next_week,
+        )
+
+        self.assertEqual(result["status"], "synced")
+        self.assertEqual(
+            [write[0][0] for write in trello.writes],
+            [
+                "create_checklist",
+                "create_check_item",
+                "update_checklist",
+                "update_check_item",
+            ],
+        )
+        history = next(
+            checklist
+            for checklist in trello.rhythm_checklists["gym"]
+            if checklist["name"] == "Cake history"
+        )
+        self.assertEqual(history["checkItems"][0]["name"], "2026-08-10–2026-08-16 · 1/2")
+        self.assertEqual(history["checkItems"][0]["state"], "complete")
 
     def test_rhythm_sync_previews_then_applies_current_checklist_creation(self) -> None:
         trello = FakeTrello()
@@ -826,6 +919,7 @@ class ProviderTest(unittest.TestCase):
             adapter.create_checklist("gym", name="Cake · week")
             adapter.update_checklist("list", name="Cake · next week")
             adapter.create_check_item("list", name="Monday")
+            adapter.create_check_item("history", name="week · 1/2", checked=True)
             adapter.update_check_item(
                 "gym", "item", name="Monday", state="incomplete"
             )
@@ -833,7 +927,7 @@ class ProviderTest(unittest.TestCase):
 
         self.assertEqual(
             [call.args[0] for call in request.call_args_list],
-            ["GET", "POST", "PUT", "POST", "PUT", "DELETE"],
+            ["GET", "POST", "PUT", "POST", "POST", "PUT", "DELETE"],
         )
         self.assertEqual(
             request.call_args_list[0].args[1],
@@ -842,6 +936,14 @@ class ProviderTest(unittest.TestCase):
         )
         self.assertEqual(
             request.call_args_list[4].args,
+            (
+                "POST",
+                "/checklists/history/checkItems",
+                {"name": "week · 1/2", "pos": "bottom", "checked": True},
+            ),
+        )
+        self.assertEqual(
+            request.call_args_list[5].args,
             (
                 "PUT",
                 "/cards/gym/checkItem/item",
